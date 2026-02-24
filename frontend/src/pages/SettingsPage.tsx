@@ -106,7 +106,7 @@ export default function SettingsPage() {
     api.get('/core/trading-points/').then(res => setPoints(res.data.results || res.data || [])).finally(() => setPtLoad(false))
   }, [])
 
-  useEffect(() => { if (tab === 1) fetchPoints() }, [tab, fetchPoints])
+  useEffect(() => { if (tab === 0) fetchPoints() }, [tab, fetchPoints])
 
   const openPtDlg = (pt?: TradingPoint) => {
     if (pt) { setEditPt(pt); setPtForm({ name: pt.name, address: pt.address || '', phone: pt.phone || '', work_schedule: pt.work_schedule || '' }) }
@@ -141,7 +141,7 @@ export default function SettingsPage() {
     api.get('/core/warehouses/').then(res => setWhs(res.data.results || res.data || [])).finally(() => setWhLoad(false))
   }, [])
 
-  useEffect(() => { if (tab === 2) { fetchWhs(); fetchPoints() } }, [tab, fetchWhs, fetchPoints])
+  useEffect(() => { if (tab === 1) { fetchWhs(); fetchPoints() } }, [tab, fetchWhs, fetchPoints])
 
   const openWhDlg = (w?: WarehouseT) => {
     if (w) { setEditWh(w); setWhForm({ name: w.name, warehouse_type: w.warehouse_type, trading_point: w.trading_point, notes: w.notes || '', is_default_for_bouquets: w.is_default_for_bouquets, is_default_for_receiving: w.is_default_for_receiving }) }
@@ -176,7 +176,7 @@ export default function SettingsPage() {
     api.get('/core/payment-methods/').then(res => setPms(res.data.results || res.data || [])).finally(() => setPmLoad(false))
   }, [])
 
-  useEffect(() => { if (tab === 3) fetchPms() }, [tab, fetchPms])
+  useEffect(() => { if (tab === 2) fetchPms() }, [tab, fetchPms])
 
   const openPmDlg = (pm?: PaymentMethod) => {
     if (pm) { setEditPm(pm); setPmForm({ name: pm.name, is_cash: pm.is_cash, commission_percent: pm.commission_percent }) }
@@ -219,7 +219,7 @@ export default function SettingsPage() {
       .finally(() => setUsersLoad(false))
   }, [])
 
-  useEffect(() => { if (tab === 4) fetchUsers() }, [tab, fetchUsers])
+  useEffect(() => { if (tab === 3) fetchUsers() }, [tab, fetchUsers])
 
   const openUserDlg = (u?: UserRow) => {
     if (u) {
@@ -281,36 +281,14 @@ export default function SettingsPage() {
       <Card>
         <CardContent>
           <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}>
-            <Tab icon={<Business />} iconPosition="start" label="Организация" />
             <Tab icon={<Store />} iconPosition="start" label="Торговые точки" />
             <Tab icon={<Warehouse />} iconPosition="start" label="Склады" />
             <Tab icon={<CreditCard />} iconPosition="start" label="Способы оплаты" />
             {isOwnerOrAdmin && <Tab icon={<People />} iconPosition="start" label="Пользователи" />}
           </Tabs>
 
-          {/* ═══ Organization Tab ═══ */}
-          {tab === 0 && (
-            <Box>
-              <Typography variant="h6" gutterBottom>Информация об организации</Typography>
-              {!org && <Alert severity="info" sx={{ mb: 2 }}>Создайте организацию для начала работы</Alert>}
-              <Grid container spacing={2} sx={{ mb: 3 }}>
-                <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Название организации" required value={orgForm.name} onChange={e => setOrgForm({ ...orgForm, name: e.target.value })} disabled={!isOwnerOrAdmin} /></Grid>
-                <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="ИНН" value={orgForm.inn} onChange={e => setOrgForm({ ...orgForm, inn: e.target.value })} disabled={!isOwnerOrAdmin} /></Grid>
-                <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Телефон" value={orgForm.phone} onChange={e => setOrgForm({ ...orgForm, phone: e.target.value })} disabled={!isOwnerOrAdmin} /></Grid>
-                <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" type="email" value={orgForm.email} onChange={e => setOrgForm({ ...orgForm, email: e.target.value })} disabled={!isOwnerOrAdmin} /></Grid>
-              </Grid>
-              {isOwnerOrAdmin && (
-                <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <Button variant="contained" startIcon={<Save />} onClick={saveOrg} disabled={orgLoading || !orgForm.name}>
-                    {org ? 'Сохранить' : 'Создать организацию'}
-                  </Button>
-                </Box>
-              )}
-            </Box>
-          )}
-
           {/* ═══ Trading Points Tab ═══ */}
-          {tab === 1 && (
+          {tab === 0 && (
             <DataTable
               columns={[
                 { key: 'name', label: 'Название', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
@@ -332,7 +310,7 @@ export default function SettingsPage() {
           )}
 
           {/* ═══ Warehouses Tab ═══ */}
-          {tab === 2 && (
+          {tab === 1 && (
             <DataTable
               columns={[
                 { key: 'name', label: 'Название', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
@@ -357,7 +335,7 @@ export default function SettingsPage() {
           )}
 
           {/* ═══ Payment Methods Tab ═══ */}
-          {tab === 3 && (
+          {tab === 2 && (
             <DataTable
               columns={[
                 { key: 'name', label: 'Название', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
@@ -378,7 +356,7 @@ export default function SettingsPage() {
           )}
 
           {/* ═══ Users Tab ═══ */}
-          {tab === 4 && isOwnerOrAdmin && (
+          {tab === 3 && isOwnerOrAdmin && (
             <DataTable
               columns={[
                 { key: 'full_name', label: 'ФИО', render: (v: string, row: UserRow) => (
