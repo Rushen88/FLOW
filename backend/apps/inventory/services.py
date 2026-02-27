@@ -254,6 +254,10 @@ def assemble_bouquet(
         comp_nomenclature = comp['nomenclature']
         comp_qty = Decimal(str(comp['quantity'])) * bouquet_qty
 
+        # Услуги не участвуют в складском учёте — пропускаем FIFO-списание
+        if comp_nomenclature.nomenclature_type == 'service':
+            continue
+
         fifo_result = fifo_write_off(
             organization=organization,
             warehouse=warehouse_from,

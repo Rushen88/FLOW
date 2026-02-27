@@ -27,7 +27,7 @@ interface BouquetComponent {
   is_required: boolean; substitute: string | null; nomenclature_name: string
 }
 interface BouquetTemplate {
-  id: string; nomenclature: string; assembly_time_minutes: number
+  id: string; nomenclature: string; bouquet_name: string; assembly_time_minutes: number
   difficulty: number; description: string; components: BouquetComponent[]
 }
 
@@ -46,19 +46,12 @@ const NOM_TYPES = [
   { value: 'service', label: 'Услуга' },
 ]
 
-const MONTHS = [
-  { value: 1, label: 'Январь' }, { value: 2, label: 'Февраль' }, { value: 3, label: 'Март' },
-  { value: 4, label: 'Апрель' }, { value: 5, label: 'Май' }, { value: 6, label: 'Июнь' },
-  { value: 7, label: 'Июль' }, { value: 8, label: 'Август' }, { value: 9, label: 'Сентябрь' },
-  { value: 10, label: 'Октябрь' }, { value: 11, label: 'Ноябрь' }, { value: 12, label: 'Декабрь' },
-]
-
 const nomTypeLabel = (v: string) => NOM_TYPES.find(t => t.value === v)?.label || v
 
 const defaultItemForm = () => ({
   name: '', nomenclature_type: 'single_flower', group: '' as string, sku: '', barcode: '',
   unit: '' as string, purchase_price: '', retail_price: '', min_price: '', markup_percent: '',
-  color: '', country: '', season_start: '' as string | number, season_end: '' as string | number,
+  color: '', country: '',
   shelf_life_days: '' as string | number, min_stock: '' as string | number, is_active: true, notes: '',
 })
 
@@ -101,7 +94,7 @@ export default function NomenclaturePage() {
   const [tplLoad, setTplLoad] = useState(false)
   const [tplDlg, setTplDlg] = useState(false)
   const [editTpl, setEditTpl] = useState<BouquetTemplate | null>(null)
-  const [tplForm, setTplForm] = useState({ nomenclature: '', assembly_time_minutes: 15, difficulty: 3, description: '' })
+  const [tplForm, setTplForm] = useState({ nomenclature: '', bouquet_name: '', assembly_time_minutes: 15, difficulty: 3, description: '' })
   const [tplComponents, setTplComponents] = useState<{ nomenclature: string; quantity: string; is_required: boolean }[]>([])
   const [tplSaving, setTplSaving] = useState(false)
   const [delTpl, setDelTpl] = useState<BouquetTemplate | null>(null)
@@ -165,8 +158,8 @@ export default function NomenclaturePage() {
         unit: item.unit || '', purchase_price: item.purchase_price || '',
         retail_price: item.retail_price || '', min_price: item.min_price || '',
         markup_percent: item.markup_percent || '', color: item.color || '',
-        country: item.country || '', season_start: item.season_start ?? '',
-        season_end: item.season_end ?? '', shelf_life_days: item.shelf_life_days ?? '',
+        country: item.country || '',
+        shelf_life_days: item.shelf_life_days ?? '',
         min_stock: item.min_stock ?? '', is_active: item.is_active, notes: item.notes || '',
       })
     } else {
@@ -182,8 +175,6 @@ export default function NomenclaturePage() {
       const d: Record<string, any> = { ...itemForm }
       if (!d.group) d.group = null
       if (!d.unit) d.unit = null
-      if (d.season_start === '') d.season_start = null
-      if (d.season_end === '') d.season_end = null
       if (d.shelf_life_days === '') d.shelf_life_days = null
       if (d.min_stock === '' || d.min_stock === null) d.min_stock = 0
       if (!d.purchase_price && d.purchase_price !== 0) d.purchase_price = '0.00'
@@ -260,6 +251,7 @@ export default function NomenclaturePage() {
       setEditTpl(tpl)
       setTplForm({
         nomenclature: tpl.nomenclature,
+        bouquet_name: tpl.bouquet_name || '',
         assembly_time_minutes: tpl.assembly_time_minutes,
         difficulty: tpl.difficulty,
         description: tpl.description || '',
@@ -271,7 +263,7 @@ export default function NomenclaturePage() {
       })))
     } else {
       setEditTpl(null)
-      setTplForm({ nomenclature: '', assembly_time_minutes: 15, difficulty: 3, description: '' })
+      setTplForm({ nomenclature: '', bouquet_name: '', assembly_time_minutes: 15, difficulty: 3, description: '' })
       setTplComponents([{ nomenclature: '', quantity: '1', is_required: true }])
     }
     setTplDlg(true)
@@ -303,6 +295,7 @@ export default function NomenclaturePage() {
       if (editTpl) {
         // Update template
         await api.patch(`/nomenclature/bouquet-templates/${editTpl.id}/`, {
+          bouquet_name: tplForm.bouquet_name,
           assembly_time_minutes: tplForm.assembly_time_minutes,
           difficulty: tplForm.difficulty,
           description: tplForm.description,
@@ -324,6 +317,7 @@ export default function NomenclaturePage() {
         // Create template
         const tplRes = await api.post('/nomenclature/bouquet-templates/', {
           nomenclature: tplForm.nomenclature,
+          bouquet_name: tplForm.bouquet_name,
           assembly_time_minutes: tplForm.assembly_time_minutes,
           difficulty: tplForm.difficulty,
           description: tplForm.description,
@@ -351,7 +345,7 @@ export default function NomenclaturePage() {
     catch (err) { notify(extractError(err, 'Ошибка удаления шаблона'), 'error') }
   }
 
-  const tplNomName = (id: string) => items.find(i => i.id === id)?.name || '—'
+  const tplDisplayName = (tpl: BouquetTemplate) => tpl.bouquet_name || items.find(i => i.id === tpl.nomenclature)?.name || '—'
 
   // ─── Find parent group name ───
   const parentName = (id: string | null) => {
@@ -445,7 +439,7 @@ export default function NomenclaturePage() {
           {tab === 3 && (
             <DataTable
               columns={[
-                { key: 'nomenclature', label: 'Букет', render: (v: string) => <Typography fontWeight={500}>{tplNomName(v)}</Typography> },
+                { key: 'bouquet_name', label: 'Букет', render: (_: any, row: BouquetTemplate) => <Typography fontWeight={500}>{tplDisplayName(row)}</Typography> },
                 { key: 'components', label: 'Компоненты', render: (v: BouquetComponent[]) => v?.length ? `${v.length} шт.` : '—' },
                 { key: 'assembly_time_minutes', label: 'Время сборки', render: (v: number) => `${v} мин` },
                 { key: 'difficulty', label: 'Сложность', render: (v: number) => '★'.repeat(v) + '☆'.repeat(5 - v) },
@@ -529,25 +523,11 @@ export default function NomenclaturePage() {
             <TextField label="Страна" fullWidth value={itemForm.country}
               onChange={e => setItemForm({ ...itemForm, country: e.target.value })} />
           </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
-            <TextField label="Сезон (начало)" select fullWidth value={itemForm.season_start}
-              onChange={e => setItemForm({ ...itemForm, season_start: e.target.value ? Number(e.target.value) : '' })}>
-              <MenuItem value="">Не указан</MenuItem>
-              {MONTHS.map(m => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
-            </TextField>
-          </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
-            <TextField label="Сезон (конец)" select fullWidth value={itemForm.season_end}
-              onChange={e => setItemForm({ ...itemForm, season_end: e.target.value ? Number(e.target.value) : '' })}>
-              <MenuItem value="">Не указан</MenuItem>
-              {MONTHS.map(m => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
-            </TextField>
-          </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
+          <Grid size={{ xs: 12, md: 4 }}>
             <TextField label="Срок годности (дни)" type="number" fullWidth value={itemForm.shelf_life_days}
               onChange={e => setItemForm({ ...itemForm, shelf_life_days: e.target.value ? Number(e.target.value) : '' })} />
           </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
+          <Grid size={{ xs: 12, md: 4 }}>
             <TextField label="Мин. остаток" type="number" fullWidth value={itemForm.min_stock}
               onChange={e => setItemForm({ ...itemForm, min_stock: e.target.value ? Number(e.target.value) : '' })} />
           </Grid>
@@ -569,11 +549,20 @@ export default function NomenclaturePage() {
         title={editTpl ? 'Редактировать шаблон букета' : 'Новый шаблон букета'}
         submitText={editTpl ? 'Сохранить' : 'Создать'}
         loading={tplSaving} disabled={!tplForm.nomenclature || tplComponents.length === 0} maxWidth="md">
-        <TextField label="Букет (номенклатура)" required select fullWidth value={tplForm.nomenclature}
-          disabled={!!editTpl}
-          onChange={e => setTplForm({ ...tplForm, nomenclature: e.target.value })}>
-          {bouquetItems.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
-        </TextField>
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <TextField label="Букет (номенклатура)" required select fullWidth value={tplForm.nomenclature}
+              disabled={!!editTpl}
+              onChange={e => setTplForm({ ...tplForm, nomenclature: e.target.value })}>
+              {bouquetItems.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
+            </TextField>
+          </Grid>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <TextField label="Название букета" fullWidth value={tplForm.bouquet_name}
+              onChange={e => setTplForm({ ...tplForm, bouquet_name: e.target.value })}
+              placeholder="Оставьте пустым — будет использовано название номенклатуры" />
+          </Grid>
+        </Grid>
         <Grid container spacing={2}>
           <Grid size={{ xs: 4 }}>
             <TextField label="Время сборки (мин)" type="number" fullWidth value={tplForm.assembly_time_minutes}

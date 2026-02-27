@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Card, CardContent, Typography, TextField, Button,
   Tab, Tabs, IconButton, Chip, MenuItem, Switch, FormControlLabel,
-  Alert, Dialog, DialogTitle, DialogContent, DialogActions,
+  Alert,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
-import { Add, Edit, Delete, Save, Store, Warehouse, CreditCard, Business, People, VpnKey } from '@mui/icons-material'
+import { Add, Edit, Delete, Save, Store, Warehouse, CreditCard, Business } from '@mui/icons-material'
 import api from '../api'
 import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
@@ -16,15 +16,8 @@ import ConfirmDialog from '../components/ConfirmDialog'
 
 interface Organization { id: string; name: string; inn: string; phone: string; email: string }
 interface TradingPoint { id: string; organization: string; name: string; address: string; phone: string; work_schedule: string; manager: string | null; is_active: boolean }
-interface WarehouseT { id: string; organization: string; trading_point: string; trading_point_name?: string; name: string; warehouse_type: string; responsible: string | null; is_default_for_bouquets: boolean; is_default_for_receiving: boolean; notes: string; is_active: boolean }
-interface PaymentMethod { id: string; organization: string; name: string; is_cash: boolean; commission_percent: string; is_active: boolean }
-interface UserRow {
-  id: string; username: string; email: string; first_name: string
-  last_name: string; patronymic: string; phone: string; role: string
-  organization: string | null; organization_name: string
-  is_active: boolean; full_name: string
-}
-
+interface WarehouseT { id: string; organization: string; trading_point: string; trading_point_name?: string; name: string; warehouse_type: string; responsible: string | null; is_default_for_bouquets: boolean; is_default_for_receiving: boolean; is_default_for_sales: boolean; notes: string; is_active: boolean }
+interface PaymentMethod { id: string; organization: string; name: string; is_cash: boolean; commission_percent: string; wallet: string | null; wallet_name: string; is_active: boolean }
 const WH_TYPES = [
   { value: 'main', label: 'Основной' },
   { value: 'showcase', label: 'Витрина' },
@@ -32,26 +25,6 @@ const WH_TYPES = [
   { value: 'assembly', label: 'Сборка' },
   { value: 'reserve', label: 'Резерв' },
 ]
-
-const ROLES = [
-  { value: 'owner', label: 'Владелец' },
-  { value: 'admin', label: 'Администратор' },
-  { value: 'manager', label: 'Менеджер' },
-  { value: 'seller', label: 'Продавец' },
-  { value: 'courier', label: 'Курьер' },
-  { value: 'accountant', label: 'Бухгалтер' },
-]
-
-const roleColor = (r: string): 'error' | 'warning' | 'primary' | 'success' | 'info' | 'default' => {
-  switch (r) {
-    case 'owner': return 'error'
-    case 'admin': return 'warning'
-    case 'manager': return 'primary'
-    case 'seller': return 'success'
-    case 'courier': return 'info'
-    default: return 'default'
-  }
-}
 
 export default function SettingsPage() {
   const { user, refreshUser } = useAuth()
@@ -133,7 +106,7 @@ export default function SettingsPage() {
   const [whLoad, setWhLoad] = useState(false)
   const [whDlg, setWhDlg] = useState(false)
   const [editWh, setEditWh] = useState<WarehouseT | null>(null)
-  const [whForm, setWhForm] = useState({ name: '', warehouse_type: 'main', trading_point: '', notes: '', is_default_for_bouquets: false, is_default_for_receiving: false })
+  const [whForm, setWhForm] = useState({ name: '', warehouse_type: 'main', trading_point: '', notes: '', is_default_for_bouquets: false, is_default_for_receiving: false, is_default_for_sales: false })
   const [delWh, setDelWh] = useState<WarehouseT | null>(null)
 
   const fetchWhs = useCallback(() => {
@@ -144,8 +117,8 @@ export default function SettingsPage() {
   useEffect(() => { if (tab === 1) { fetchWhs(); fetchPoints() } }, [tab, fetchWhs, fetchPoints])
 
   const openWhDlg = (w?: WarehouseT) => {
-    if (w) { setEditWh(w); setWhForm({ name: w.name, warehouse_type: w.warehouse_type, trading_point: w.trading_point, notes: w.notes || '', is_default_for_bouquets: w.is_default_for_bouquets, is_default_for_receiving: w.is_default_for_receiving }) }
-    else { setEditWh(null); setWhForm({ name: '', warehouse_type: 'main', trading_point: points[0]?.id || '', notes: '', is_default_for_bouquets: false, is_default_for_receiving: false }) }
+    if (w) { setEditWh(w); setWhForm({ name: w.name, warehouse_type: w.warehouse_type, trading_point: w.trading_point, notes: w.notes || '', is_default_for_bouquets: w.is_default_for_bouquets, is_default_for_receiving: w.is_default_for_receiving, is_default_for_sales: w.is_default_for_sales }) }
+    else { setEditWh(null); setWhForm({ name: '', warehouse_type: 'main', trading_point: points[0]?.id || '', notes: '', is_default_for_bouquets: false, is_default_for_receiving: false, is_default_for_sales: false }) }
     setWhDlg(true)
   }
 
@@ -168,26 +141,28 @@ export default function SettingsPage() {
   const [pmLoad, setPmLoad] = useState(false)
   const [pmDlg, setPmDlg] = useState(false)
   const [editPm, setEditPm] = useState<PaymentMethod | null>(null)
-  const [pmForm, setPmForm] = useState({ name: '', is_cash: true, commission_percent: '0' })
+  const [pmForm, setPmForm] = useState({ name: '', is_cash: true, commission_percent: '0', wallet: '' })
   const [delPm, setDelPm] = useState<PaymentMethod | null>(null)
+  const [wallets, setWallets] = useState<{id: string; name: string}[]>([])
 
   const fetchPms = useCallback(() => {
     setPmLoad(true)
     api.get('/core/payment-methods/').then(res => setPms(res.data.results || res.data || [])).finally(() => setPmLoad(false))
   }, [])
 
-  useEffect(() => { if (tab === 2) fetchPms() }, [tab, fetchPms])
+  useEffect(() => { if (tab === 2) { fetchPms(); api.get('/finance/wallets/').then(res => setWallets(res.data.results || res.data || [])) } }, [tab, fetchPms])
 
   const openPmDlg = (pm?: PaymentMethod) => {
-    if (pm) { setEditPm(pm); setPmForm({ name: pm.name, is_cash: pm.is_cash, commission_percent: pm.commission_percent }) }
-    else { setEditPm(null); setPmForm({ name: '', is_cash: true, commission_percent: '0' }) }
+    if (pm) { setEditPm(pm); setPmForm({ name: pm.name, is_cash: pm.is_cash, commission_percent: pm.commission_percent, wallet: pm.wallet || '' }) }
+    else { setEditPm(null); setPmForm({ name: '', is_cash: true, commission_percent: '0', wallet: '' }) }
     setPmDlg(true)
   }
 
   const savePm = async () => {
     try {
-      if (editPm) { await api.patch(`/core/payment-methods/${editPm.id}/`, pmForm); notify('Способ оплаты обновлён') }
-      else { await api.post('/core/payment-methods/', pmForm); notify('Способ оплаты создан') }
+      const pmData = { ...pmForm, wallet: pmForm.wallet || null }
+      if (editPm) { await api.patch(`/core/payment-methods/${editPm.id}/`, pmData); notify('Способ оплаты обновлён') }
+      else { await api.post('/core/payment-methods/', pmData); notify('Способ оплаты создан') }
       setPmDlg(false); fetchPms()
     } catch (err) { notify(extractError(err, 'Ошибка сохранения'), 'error') }
   }
@@ -196,83 +171,6 @@ export default function SettingsPage() {
     if (!delPm) return
     try { await api.delete(`/core/payment-methods/${delPm.id}/`); notify('Способ оплаты удалён'); setDelPm(null); fetchPms() }
     catch (err) { notify(extractError(err, 'Ошибка удаления'), 'error') }
-  }
-
-  // ─── Users ───
-  const [users, setUsers] = useState<UserRow[]>([])
-  const [usersLoad, setUsersLoad] = useState(false)
-  const [userDlg, setUserDlg] = useState(false)
-  const [editUser, setEditUser] = useState<UserRow | null>(null)
-  const [userForm, setUserForm] = useState({
-    username: '', email: '', password: '', first_name: '',
-    last_name: '', patronymic: '', phone: '', role: 'seller',
-  })
-  const [delUser, setDelUser] = useState<UserRow | null>(null)
-  const [pwdDlg, setPwdDlg] = useState(false)
-  const [pwdUser, setPwdUser] = useState<UserRow | null>(null)
-  const [newPwd, setNewPwd] = useState('')
-
-  const fetchUsers = useCallback(() => {
-    setUsersLoad(true)
-    api.get('/core/users/')
-      .then(res => setUsers(res.data.results || res.data || []))
-      .finally(() => setUsersLoad(false))
-  }, [])
-
-  useEffect(() => { if (tab === 3) fetchUsers() }, [tab, fetchUsers])
-
-  const openUserDlg = (u?: UserRow) => {
-    if (u) {
-      setEditUser(u)
-      setUserForm({
-        username: u.username, email: u.email || '', password: '',
-        first_name: u.first_name || '', last_name: u.last_name || '',
-        patronymic: u.patronymic || '', phone: u.phone || '', role: u.role,
-      })
-    } else {
-      setEditUser(null)
-      setUserForm({
-        username: '', email: '', password: '', first_name: '',
-        last_name: '', patronymic: '', phone: '', role: 'seller',
-      })
-    }
-    setUserDlg(true)
-  }
-
-  const saveUser = async () => {
-    try {
-      if (editUser) {
-        const { password, ...rest } = userForm
-        await api.patch(`/core/users/${editUser.id}/`, rest)
-        notify('Пользователь обновлён')
-      } else {
-        await api.post('/core/users/', userForm)
-        notify('Пользователь создан')
-      }
-      setUserDlg(false)
-      fetchUsers()
-    } catch (err) { notify(extractError(err, 'Ошибка сохранения'), 'error') }
-  }
-
-  const removeUser = async () => {
-    if (!delUser) return
-    try {
-      await api.delete(`/core/users/${delUser.id}/`)
-      notify('Пользователь удалён')
-      setDelUser(null)
-      fetchUsers()
-    } catch (err) { notify(extractError(err, 'Ошибка удаления'), 'error') }
-  }
-
-  const changePassword = async () => {
-    if (!pwdUser) return
-    try {
-      await api.post(`/core/users/${pwdUser.id}/set-password/`, { password: newPwd })
-      notify('Пароль изменён')
-      setPwdDlg(false)
-      setPwdUser(null)
-      setNewPwd('')
-    } catch (err) { notify(extractError(err, 'Ошибка смены пароля'), 'error') }
   }
 
   return (
@@ -284,7 +182,6 @@ export default function SettingsPage() {
             <Tab icon={<Store />} iconPosition="start" label="Торговые точки" />
             <Tab icon={<Warehouse />} iconPosition="start" label="Склады" />
             <Tab icon={<CreditCard />} iconPosition="start" label="Способы оплаты" />
-            {isOwnerOrAdmin && <Tab icon={<People />} iconPosition="start" label="Пользователи" />}
           </Tabs>
 
           {/* ═══ Trading Points Tab ═══ */}
@@ -319,6 +216,7 @@ export default function SettingsPage() {
                 { key: '_def', label: 'По умолчанию', render: (_: any, row: WarehouseT) => (<Box sx={{ display: 'flex', gap: 0.5 }}>
                   {row.is_default_for_receiving && <Chip label="Приёмка" size="small" color="primary" />}
                   {row.is_default_for_bouquets && <Chip label="Букеты" size="small" color="secondary" />}
+                  {row.is_default_for_sales && <Chip label="Продажи" size="small" color="info" />}
                 </Box>) },
                 { key: 'is_active', label: 'Статус', render: (v: boolean) => <Chip label={v ? 'Активен' : 'Неактивен'} size="small" color={v ? 'success' : 'default'} /> },
                 ...(isOwnerOrAdmin ? [{ key: '_act', label: '', align: 'center' as const, width: 100, render: (_: any, row: WarehouseT) => (<>
@@ -340,6 +238,7 @@ export default function SettingsPage() {
               columns={[
                 { key: 'name', label: 'Название', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
                 { key: 'is_cash', label: 'Тип', render: (v: boolean) => <Chip label={v ? 'Наличные' : 'Безналичные'} size="small" variant="outlined" /> },
+                { key: 'wallet_name', label: 'Кошелёк', render: (v: string) => v || '—' },
                 { key: 'commission_percent', label: 'Комиссия', align: 'right' as const, render: (v: string) => `${v}%` },
                 { key: 'is_active', label: 'Статус', render: (v: boolean) => <Chip label={v ? 'Активен' : 'Неактивен'} size="small" color={v ? 'success' : 'default'} /> },
                 ...(isOwnerOrAdmin ? [{ key: '_act', label: '', align: 'center' as const, width: 100, render: (_: any, row: PaymentMethod) => (<>
@@ -355,39 +254,7 @@ export default function SettingsPage() {
             />
           )}
 
-          {/* ═══ Users Tab ═══ */}
-          {tab === 3 && isOwnerOrAdmin && (
-            <DataTable
-              columns={[
-                { key: 'full_name', label: 'ФИО', render: (v: string, row: UserRow) => (
-                  <Box>
-                    <Typography fontWeight={500}>{v || row.username}</Typography>
-                    <Typography variant="caption" color="textSecondary">{row.username}</Typography>
-                  </Box>
-                )},
-                { key: 'email', label: 'Email' },
-                { key: 'phone', label: 'Телефон' },
-                { key: 'role', label: 'Роль', render: (v: string) => (
-                  <Chip label={ROLES.find(r => r.value === v)?.label || v} size="small" color={roleColor(v)} />
-                )},
-                { key: 'is_active', label: 'Статус', render: (v: boolean) => (
-                  <Chip label={v ? 'Активен' : 'Блокирован'} size="small" color={v ? 'success' : 'default'} />
-                )},
-                { key: '_act', label: '', align: 'center' as const, width: 140,
-                  render: (_: any, row: UserRow) => (<>
-                    <IconButton size="small" onClick={() => openUserDlg(row)} title="Редактировать"><Edit fontSize="small" /></IconButton>
-                    <IconButton size="small" onClick={() => { setPwdUser(row); setNewPwd(''); setPwdDlg(true) }} title="Сменить пароль"><VpnKey fontSize="small" /></IconButton>
-                    <IconButton size="small" onClick={() => setDelUser(row)} title="Удалить" disabled={row.id === user?.id}><Delete fontSize="small" /></IconButton>
-                  </>) },
-              ]}
-              rows={users} loading={usersLoad} emptyText="Нет пользователей"
-              headerActions={
-                <Button variant="contained" startIcon={<Add />} onClick={() => openUserDlg()}>
-                  Добавить пользователя
-                </Button>
-              }
-            />
-          )}
+
         </CardContent>
       </Card>
 
@@ -413,6 +280,7 @@ export default function SettingsPage() {
         <TextField label="Примечания" fullWidth multiline rows={2} value={whForm.notes} onChange={e => setWhForm({ ...whForm, notes: e.target.value })} />
         <FormControlLabel control={<Switch checked={whForm.is_default_for_receiving} onChange={e => setWhForm({ ...whForm, is_default_for_receiving: e.target.checked })} />} label="По умолчанию для приёмки" />
         <FormControlLabel control={<Switch checked={whForm.is_default_for_bouquets} onChange={e => setWhForm({ ...whForm, is_default_for_bouquets: e.target.checked })} />} label="По умолчанию для букетов" />
+        <FormControlLabel control={<Switch checked={whForm.is_default_for_sales} onChange={e => setWhForm({ ...whForm, is_default_for_sales: e.target.checked })} />} label="По умолчанию для продаж" />
       </EntityFormDialog>
 
       {/* Payment Method Dialog */}
@@ -425,77 +293,16 @@ export default function SettingsPage() {
         </TextField>
         <TextField label="Комиссия %" type="number" fullWidth value={pmForm.commission_percent}
           onChange={e => setPmForm({ ...pmForm, commission_percent: e.target.value })} />
+        <TextField label="Кошелёк" select fullWidth value={pmForm.wallet}
+          onChange={e => setPmForm({ ...pmForm, wallet: e.target.value })}>
+          <MenuItem value="">— Не привязан —</MenuItem>
+          {wallets.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
+        </TextField>
       </EntityFormDialog>
-
-      {/* User Dialog */}
-      <EntityFormDialog open={userDlg} onClose={() => setUserDlg(false)} onSubmit={saveUser}
-        title={editUser ? 'Редактировать пользователя' : 'Новый пользователь'}
-        submitText={editUser ? 'Сохранить' : 'Создать'}
-        disabled={!userForm.username || (!editUser && userForm.password.length < 8)}>
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="Логин" required fullWidth value={userForm.username}
-              onChange={e => setUserForm({ ...userForm, username: e.target.value })}
-              disabled={!!editUser} />
-          </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="Email" type="email" fullWidth value={userForm.email}
-              onChange={e => setUserForm({ ...userForm, email: e.target.value })} />
-          </Grid>
-          {!editUser && (
-            <Grid size={{ xs: 12 }}>
-              <TextField label="Пароль" type="password" required fullWidth value={userForm.password}
-                onChange={e => setUserForm({ ...userForm, password: e.target.value })}
-                helperText="Минимум 8 символов" />
-            </Grid>
-          )}
-          <Grid size={{ xs: 12, md: 4 }}>
-            <TextField label="Фамилия" fullWidth value={userForm.last_name}
-              onChange={e => setUserForm({ ...userForm, last_name: e.target.value })} />
-          </Grid>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <TextField label="Имя" fullWidth value={userForm.first_name}
-              onChange={e => setUserForm({ ...userForm, first_name: e.target.value })} />
-          </Grid>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <TextField label="Отчество" fullWidth value={userForm.patronymic}
-              onChange={e => setUserForm({ ...userForm, patronymic: e.target.value })} />
-          </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="Телефон" fullWidth value={userForm.phone}
-              onChange={e => setUserForm({ ...userForm, phone: e.target.value })} />
-          </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="Роль" select required fullWidth value={userForm.role}
-              onChange={e => setUserForm({ ...userForm, role: e.target.value })}>
-              {ROLES.map(r => <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>)}
-            </TextField>
-          </Grid>
-        </Grid>
-      </EntityFormDialog>
-
-      {/* Password Dialog */}
-      <Dialog open={pwdDlg} onClose={() => setPwdDlg(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Смена пароля — {pwdUser?.full_name || pwdUser?.username}</DialogTitle>
-        <DialogContent sx={{ pt: 2 }}>
-          <TextField label="Новый пароль" type="password" fullWidth value={newPwd}
-            onChange={e => setNewPwd(e.target.value)} helperText="Минимум 8 символов"
-            sx={{ mt: 1 }} />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setPwdDlg(false)}>Отмена</Button>
-          <Button variant="contained" onClick={changePassword} disabled={newPwd.length < 8}>
-            Сменить пароль
-          </Button>
-        </DialogActions>
-      </Dialog>
 
       <ConfirmDialog open={!!delPt} title="Удалить точку?" message={`Удалить "${delPt?.name}"?`} onConfirm={removePt} onCancel={() => setDelPt(null)} />
       <ConfirmDialog open={!!delWh} title="Удалить склад?" message={`Удалить "${delWh?.name}"?`} onConfirm={removeWh} onCancel={() => setDelWh(null)} />
       <ConfirmDialog open={!!delPm} title="Удалить способ оплаты?" message={`Удалить "${delPm?.name}"?`} onConfirm={removePm} onCancel={() => setDelPm(null)} />
-      <ConfirmDialog open={!!delUser} title="Удалить пользователя?"
-        message={`Удалить "${delUser?.full_name || delUser?.username}"?`}
-        onConfirm={removeUser} onCancel={() => setDelUser(null)} />
     </Box>
   )
 }

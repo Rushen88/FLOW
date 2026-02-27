@@ -133,6 +133,7 @@ class Warehouse(models.Model):
     )
     is_default_for_bouquets = models.BooleanField('По умолчанию для букетов', default=False)
     is_default_for_receiving = models.BooleanField('По умолчанию для прихода', default=False)
+    is_default_for_sales = models.BooleanField('По умолчанию для продаж', default=False)
     notes = models.TextField('Примечания', blank=True, default='')
     is_active = models.BooleanField('Активен', default=True)
 
@@ -156,6 +157,10 @@ class PaymentMethod(models.Model):
     is_cash = models.BooleanField('Наличный', default=True)
     commission_percent = models.DecimalField(
         'Комиссия %', max_digits=5, decimal_places=2, default=0,
+    )
+    wallet = models.ForeignKey(
+        'finance.Wallet', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='payment_methods', verbose_name='Кошелёк',
     )
     is_active = models.BooleanField('Активен', default=True)
 

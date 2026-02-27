@@ -120,6 +120,7 @@ class BouquetTemplate(models.Model):
         Nomenclature, on_delete=models.CASCADE,
         related_name='bouquet_template', verbose_name='Номенклатура',
     )
+    bouquet_name = models.CharField('Название букета', max_length=500, blank=True, default='')
     assembly_time_minutes = models.PositiveIntegerField('Время сборки (мин)', default=15)
     difficulty = models.PositiveSmallIntegerField('Сложность (1-5)', default=3)
     description = models.TextField('Описание сборки', blank=True, default='')

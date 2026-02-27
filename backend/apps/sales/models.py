@@ -37,6 +37,7 @@ class Sale(models.Model):
     )
     subtotal = models.DecimalField('Сумма', max_digits=12, decimal_places=2, default=0)
     discount_amount = models.DecimalField('Скидка', max_digits=12, decimal_places=2, default=0)
+    discount_percent = models.DecimalField('Скидка %', max_digits=5, decimal_places=2, default=0)
     total = models.DecimalField('Итого', max_digits=12, decimal_places=2, default=0)
     payment_method = models.ForeignKey(
         'core.PaymentMethod', on_delete=models.SET_NULL, null=True, blank=True,

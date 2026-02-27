@@ -231,7 +231,10 @@ export default function InventoryPage() {
   const [asmDlg, setAsmDlg] = useState(false)
   const [asmForm, setAsmForm] = useState({ nomenclature_bouquet: '', warehouse_from: '', warehouse_to: '', quantity: '1' })
   const [asmComponents, setAsmComponents] = useState<BouquetComponent[]>([])
+  const [asmCustom, setAsmCustom] = useState(false)
   const [asmSaving, setAsmSaving] = useState(false)
+
+  const componentNoms = allNom.filter(n => n.nomenclature_type !== 'bouquet' && n.nomenclature_type !== 'composition' && n.nomenclature_type !== 'service')
 
   const [dasmDlg, setDasmDlg] = useState(false)
   const [dasmForm, setDasmForm] = useState({ nomenclature_bouquet: '', warehouse: '' })
@@ -243,6 +246,7 @@ export default function InventoryPage() {
   const openAsmDlg = () => {
     setAsmForm({ nomenclature_bouquet: '', warehouse_from: '', warehouse_to: '', quantity: '1' })
     setAsmComponents([])
+    setAsmCustom(false)
     setAsmDlg(true)
   }
 
@@ -250,33 +254,34 @@ export default function InventoryPage() {
     setAsmForm(f => ({ ...f, nomenclature_bouquet: nomId }))
     const tpl = bouquetTemplates.find(t => t.nomenclature === nomId)
     if (tpl && tpl.components?.length) {
+      setAsmCustom(false)
       setAsmComponents(tpl.components.map(c => ({
         nomenclature: c.nomenclature,
         nomenclature_name: c.nomenclature_name || allNom.find(n => n.id === c.nomenclature)?.name || '?',
         quantity: c.quantity,
       })))
     } else {
-      setAsmComponents([])
+      setAsmCustom(true)
+      setAsmComponents([{ nomenclature: '', nomenclature_name: '', quantity: '1' }])
     }
   }
 
   const submitAssembly = async () => {
     setAsmSaving(true)
     try {
-      const tpl = bouquetTemplates.find(t => t.nomenclature === asmForm.nomenclature_bouquet)
       const payload: Record<string, any> = {
         nomenclature_bouquet: asmForm.nomenclature_bouquet,
         warehouse_from: asmForm.warehouse_from,
         warehouse_to: asmForm.warehouse_to,
         quantity: parseInt(asmForm.quantity) || 1,
       }
-      if (tpl) {
-        payload.use_template = true
-      } else {
+      if (asmCustom) {
         payload.use_template = false
         payload.components = asmComponents
           .filter(c => c.nomenclature && parseFloat(c.quantity) > 0)
           .map(c => ({ nomenclature: c.nomenclature, quantity: c.quantity }))
+      } else {
+        payload.use_template = true
       }
       const res = await api.post('/inventory/movements/assemble-bouquet/', payload)
       notify(res.data.message || 'Букет собран!')
@@ -348,7 +353,7 @@ export default function InventoryPage() {
         <CardContent>
           <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}>
             <Tab icon={<Inventory2 />} iconPosition="start" label="Остатки" />
-            <Tab icon={<LocalShipping />} iconPosition="start" label="Партии" />
+            <Tab icon={<LocalShipping />} iconPosition="start" label="Поступления" />
             <Tab icon={<SwapHoriz />} iconPosition="start" label="Движения" />
           </Tabs>
 
@@ -549,7 +554,7 @@ export default function InventoryPage() {
                 onChange={e => setAsmForm({ ...asmForm, quantity: e.target.value })} />
             </Grid>
           </Grid>
-          {asmComponents.length > 0 && (
+          {asmComponents.length > 0 && !asmCustom && (
             <Box>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>Компоненты (из шаблона):</Typography>
               {asmComponents.map((c, i) => (
@@ -568,16 +573,46 @@ export default function InventoryPage() {
               </Typography>
             </Box>
           )}
-          {asmForm.nomenclature_bouquet && asmComponents.length === 0 && (
-            <Typography variant="body2" color="text.secondary">
-              Шаблон не найден. Создайте шаблон в Номенклатура — Шаблоны букетов.
-            </Typography>
+          {asmCustom && asmForm.nomenclature_bouquet && (
+            <Box>
+              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>Индивидуальная сборка (шаблон не найден):</Typography>
+              {asmComponents.map((c, i) => (
+                <Grid container spacing={1} key={i} alignItems="center" sx={{ mb: 0.5 }}>
+                  <Grid size={{ xs: 6 }}>
+                    <TextField select size="small" fullWidth label="Материал" value={c.nomenclature}
+                      onChange={e => {
+                        const upd = [...asmComponents]
+                        upd[i] = { ...upd[i], nomenclature: e.target.value, nomenclature_name: componentNoms.find(n => n.id === e.target.value)?.name || '' }
+                        setAsmComponents(upd)
+                      }}>
+                      {componentNoms.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
+                    </TextField>
+                  </Grid>
+                  <Grid size={{ xs: 3 }}>
+                    <TextField size="small" fullWidth label="Кол-во" type="number" value={c.quantity}
+                      onChange={e => {
+                        const upd = [...asmComponents]
+                        upd[i] = { ...upd[i], quantity: e.target.value }
+                        setAsmComponents(upd)
+                      }} />
+                  </Grid>
+                  <Grid size={{ xs: 3 }}>
+                    <IconButton size="small" color="error" onClick={() => setAsmComponents(prev => prev.filter((_, j) => j !== i))}>
+                      <Delete fontSize="small" />
+                    </IconButton>
+                  </Grid>
+                </Grid>
+              ))}
+              <Button size="small" startIcon={<Add />} onClick={() => setAsmComponents(prev => [...prev, { nomenclature: '', nomenclature_name: '', quantity: '1' }])}>
+                Добавить компонент
+              </Button>
+            </Box>
           )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setAsmDlg(false)}>Отмена</Button>
           <Button variant="contained" onClick={submitAssembly}
-            disabled={asmSaving || !asmForm.nomenclature_bouquet || !asmForm.warehouse_from || !asmForm.warehouse_to || asmComponents.length === 0}>
+            disabled={asmSaving || !asmForm.nomenclature_bouquet || !asmForm.warehouse_from || !asmForm.warehouse_to || asmComponents.filter(c => c.nomenclature).length === 0}>
             {asmSaving ? 'Сборка...' : 'Собрать'}
           </Button>
         </DialogActions>

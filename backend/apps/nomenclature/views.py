@@ -19,7 +19,7 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         parent = self.request.query_params.get('root')
         if parent == '1':
             qs = qs.filter(parent__isnull=True)
-        return qs
+        return qs.distinct()
 
 
 class MeasureUnitViewSet(viewsets.ModelViewSet):

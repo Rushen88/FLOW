@@ -94,6 +94,42 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         qs = StockBalance.objects.select_related('nomenclature', 'warehouse')
         return _tenant_filter(qs, self.request.user)
 
+    @action(detail=False, methods=['get'], url_path='summary')
+    def summary(self, request):
+        """
+        Агрегированные остатки по номенклатуре (для продаж).
+        Возвращает список {nomenclature, nomenclature_name, total_qty, warehouses: [{warehouse, warehouse_name, qty}]}
+        """
+        from apps.core.mixins import _resolve_org
+        from django.db.models import Sum
+        org = _resolve_org(request.user)
+        if not org:
+            return Response([])
+        qs = StockBalance.objects.filter(
+            organization=org, quantity__gt=0,
+        ).select_related('nomenclature', 'warehouse')
+        warehouse_id = request.query_params.get('warehouse')
+        if warehouse_id:
+            qs = qs.filter(warehouse_id=warehouse_id)
+
+        # Group by nomenclature
+        from collections import defaultdict
+        groups = defaultdict(lambda: {'nomenclature': '', 'nomenclature_name': '', 'total_qty': Decimal('0'), 'warehouses': []})
+        for sb in qs:
+            key = str(sb.nomenclature_id)
+            groups[key]['nomenclature'] = key
+            groups[key]['nomenclature_name'] = sb.nomenclature.name
+            groups[key]['total_qty'] += sb.quantity
+            groups[key]['warehouses'].append({
+                'warehouse': str(sb.warehouse_id),
+                'warehouse_name': sb.warehouse.name,
+                'qty': str(sb.quantity),
+            })
+        result = [{'nomenclature': v['nomenclature'], 'nomenclature_name': v['nomenclature_name'],
+                    'total_qty': str(v['total_qty']), 'warehouses': v['warehouses']}
+                   for v in groups.values()]
+        return Response(result)
+
 
 class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = StockMovementSerializer

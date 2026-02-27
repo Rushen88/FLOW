@@ -19,6 +19,7 @@ interface Employee {
   patronymic: string; phone: string; email: string; position: string; trading_point: string | null
   hire_date: string; fire_date: string | null; is_active: boolean; notes: string
   full_name: string; position_name: string
+  username: string; user_role: string
 }
 interface Shift {
   id: string; organization: string; employee: string; trading_point: string
@@ -43,9 +44,19 @@ const statusChip = (val: string) => {
   return <Chip label={s?.label || val} size="small" color={s?.color || 'default'} />
 }
 
+const ROLES = [
+  { value: 'owner', label: 'Владелец' },
+  { value: 'admin', label: 'Администратор' },
+  { value: 'manager', label: 'Менеджер' },
+  { value: 'seller', label: 'Продавец' },
+  { value: 'courier', label: 'Курьер' },
+  { value: 'accountant', label: 'Бухгалтер' },
+]
+
 const defaultEmpForm = () => ({
   first_name: '', last_name: '', patronymic: '', phone: '', email: '',
   position: '', trading_point: '', hire_date: '', fire_date: '', is_active: true, notes: '',
+  create_username: '', create_password: '', create_role: 'seller',
 })
 const defaultPosForm = () => ({ name: '', base_salary: '', description: '' })
 const defaultShiftForm = () => ({
@@ -105,6 +116,7 @@ export default function StaffPage() {
         phone: e.phone || '', email: e.email || '', position: e.position || '',
         trading_point: e.trading_point || '', hire_date: e.hire_date || '',
         fire_date: e.fire_date || '', is_active: e.is_active, notes: e.notes || '',
+        create_username: '', create_password: '', create_role: e.user_role || 'seller',
       })
     } else { setEditEmp(null); setEmpForm(defaultEmpForm()) }
     setEmpDlg(true)
@@ -118,6 +130,13 @@ export default function StaffPage() {
       if (!d.position) d.position = null
       if (!d.fire_date) d.fire_date = null
       if (!d.hire_date) d.hire_date = null
+      if (!editEmp && d.create_username) {
+        // fields already in d from empForm spread
+      } else {
+        delete d.create_username
+        delete d.create_password
+        delete d.create_role
+      }
       if (editEmp) { await api.patch(`/staff/employees/${editEmp.id}/`, d); notify('Сотрудник обновлён') }
       else { await api.post('/staff/employees/', d); notify('Сотрудник создан') }
       setEmpDlg(false); fetchEmployees()
@@ -310,6 +329,11 @@ export default function StaffPage() {
     { key: 'position_name', label: 'Должность' },
     { key: 'phone', label: 'Телефон' },
     { key: 'email', label: 'Email' },
+    { key: 'username', label: 'Логин', render: (v: string) => v || <Typography variant="body2" color="text.secondary">—</Typography> },
+    { key: 'user_role', label: 'Роль', render: (v: string) => {
+      const r = ROLES.find(x => x.value === v)
+      return r ? <Chip label={r.label} size="small" variant="outlined" /> : <Typography variant="body2" color="text.secondary">—</Typography>
+    }},
     { key: 'hire_date', label: 'Дата найма' },
     { key: 'is_active', label: 'Статус', render: (v: boolean) => <Chip label={v ? 'Активен' : 'Уволен'} size="small" color={v ? 'success' : 'default'} /> },
     { key: '_actions', label: '', width: 100, render: (_: any, r: Employee) => (
@@ -445,6 +469,38 @@ export default function StaffPage() {
                   label="Активен"
                 />
               </Grid>
+              {!editEmp && (
+                <>
+                  <Grid size={12}>
+                    <Typography variant="subtitle2" fontWeight={600} sx={{ mt: 1 }}>
+                      Учётная запись (необязательно)
+                    </Typography>
+                  </Grid>
+                  <Grid size={4}>
+                    <TextField fullWidth label="Логин" value={empForm.create_username}
+                      onChange={e => setEmpForm({ ...empForm, create_username: e.target.value })}
+                      helperText="Если указан, будет создан пользователь" />
+                  </Grid>
+                  <Grid size={4}>
+                    <TextField fullWidth label="Пароль" type="password" value={empForm.create_password}
+                      onChange={e => setEmpForm({ ...empForm, create_password: e.target.value })}
+                      helperText="Мин. 8 символов" />
+                  </Grid>
+                  <Grid size={4}>
+                    <TextField fullWidth select label="Роль" value={empForm.create_role}
+                      onChange={e => setEmpForm({ ...empForm, create_role: e.target.value })}>
+                      {ROLES.map(r => <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>)}
+                    </TextField>
+                  </Grid>
+                </>
+              )}
+              {editEmp && editEmp.user && (
+                <Grid size={12}>
+                  <Typography variant="body2" color="text.secondary">
+                    Привязан к пользователю: <b>{editEmp.username}</b> (роль: {ROLES.find(r => r.value === editEmp.user_role)?.label || editEmp.user_role})
+                  </Typography>
+                </Grid>
+              )}
               <Grid size={12}>
                 <TextField fullWidth label="Заметки" multiline rows={2} value={empForm.notes}
                   onChange={e => setEmpForm({ ...empForm, notes: e.target.value })} />

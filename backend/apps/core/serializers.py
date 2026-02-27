@@ -88,10 +88,15 @@ class WarehouseSerializer(serializers.ModelSerializer):
 
 
 class PaymentMethodSerializer(serializers.ModelSerializer):
+    wallet_name = serializers.SerializerMethodField()
+
     class Meta:
         model = PaymentMethod
         fields = '__all__'
         read_only_fields = ['organization']
+
+    def get_wallet_name(self, obj):
+        return obj.wallet.name if obj.wallet else ''
 
 
 # ─── Platform admin serializers ────────────────────────────────

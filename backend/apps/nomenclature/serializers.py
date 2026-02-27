@@ -11,8 +11,12 @@ class NomenclatureGroupSerializer(serializers.ModelSerializer):
         read_only_fields = ['organization']
 
     def get_children(self, obj):
-        children = obj.children.all()
-        return NomenclatureGroupSerializer(children, many=True).data
+        # Only include children for root-level groups (when fetched with ?root=1)
+        request = self.context.get('request')
+        if request and request.query_params.get('root') == '1':
+            children = obj.children.all()
+            return NomenclatureGroupSerializer(children, many=True, context=self.context).data
+        return []
 
 
 class MeasureUnitSerializer(serializers.ModelSerializer):
@@ -33,10 +37,16 @@ class BouquetComponentSerializer(serializers.ModelSerializer):
 
 class BouquetTemplateSerializer(serializers.ModelSerializer):
     components = BouquetComponentSerializer(many=True, read_only=True)
+    bouquet_name = serializers.SerializerMethodField()
 
     class Meta:
         model = BouquetTemplate
         fields = '__all__'
+
+    def get_bouquet_name(self, obj):
+        if obj.bouquet_name:
+            return obj.bouquet_name
+        return obj.nomenclature.name if obj.nomenclature else ''
 
 
 class NomenclatureSerializer(serializers.ModelSerializer):
