@@ -93,8 +93,8 @@ FLOW/
 | **Organization** | Организация (мультитенант) | name, inn, phone, email, is_active, subscription_plan, monthly_price, paid_until, max_users |
 | **User** | Пользователь (расш. AbstractUser) | organization → Organization, active_organization → Organization (суперадмин), role (owner/admin/manager/seller/courier/accountant), phone, avatar |
 | **TradingPoint** | Торговая точка | organization → Organization, name, address, manager → User, work_schedule |
-| **Warehouse** | Склад | trading_point → TradingPoint, type (main/showcase/fridge/assembly/reserve), is_default |
-| **PaymentMethod** | Способ оплаты | organization → Organization, name, is_cash, commission_percent |
+| **Warehouse** | Склад | trading_point → TradingPoint, type (main/showcase/fridge/assembly/reserve), is_default, is_default_for_sales |
+| **PaymentMethod** | Способ оплаты | organization → Organization, name, is_cash, commission_percent, wallet → Wallet |
 | **TenantContact** | Контактное лицо тенанта | organization → Organization, name, position, phone, email, is_primary |
 | **TenantPayment** | Оплата SaaS-подписки | organization → Organization, amount, payment_date, period_from/to, payment_method, invoice_number, created_by → User |
 | **TenantNote** | Журнал взаимодействий | organization → Organization, note_type (call/meeting/support/billing/internal/onboarding/other), subject, content, created_by → User |
@@ -112,7 +112,7 @@ FLOW/
 | **NomenclatureGroup** | Группа/категория | parent → self (иерархия), name |
 | **MeasureUnit** | Единица измерения | name, short_name |
 | **Nomenclature** | Товар | group → NomenclatureGroup, type (12 типов: single_flower, bouquet, composition и др.), sku, purchase_price, retail_price, min_price, color, country, season, shelf_life, min_stock |
-| **BouquetTemplate** | Шаблон букета | nomenclature → Nomenclature, assembly_time, difficulty |
+| **BouquetTemplate** | Шаблон букета | nomenclature → Nomenclature, bouquet_name, assembly_time, difficulty |
 | **BouquetComponent** | Компонент букета | template → BouquetTemplate, nomenclature → Nomenclature, quantity, is_required, substitute → Nomenclature |
 
 **Связи:**
@@ -143,7 +143,7 @@ FLOW/
 
 | Модель | Описание | Ключевые поля |
 |--------|----------|---------------|
-| **Sale** | Чек продажи | trading_point → TradingPoint, seller → User, customer → Customer, status (open/completed/cancelled), subtotal, discount_amount, total, payment_method → PaymentMethod |
+| **Sale** | Чек продажи | trading_point → TradingPoint, seller → User, customer → Customer, status (open/completed/cancelled), subtotal, discount_percent, discount_amount, total, payment_method → PaymentMethod |
 | **SaleItem** | Позиция чека | sale → Sale, nomenclature → Nomenclature, batch → Batch, quantity, price, discount_percent, total |
 | **Order** | Заказ | trading_point, customer, status (new → confirmed → in_assembly → assembled → on_delivery → delivered → completed | cancelled), source (7 типов), recipient_*, delivery_*, prepayment_amount, remaining_amount, florist → User, courier → Courier, promo_code → PromoCode |
 | **OrderItem** | Позиция заказа | order → Order, nomenclature, quantity, price, is_custom_bouquet, custom_description |
@@ -553,3 +553,21 @@ npm run dev                       # → http://localhost:3000
 - 🔲 Мобильное приложение (React Native / PWA)
 - 🔲 Redis для кеширования и Celery для фоновых задач
 - 🔲 Автоматические отчёты и email-рассылки
+---
+
+## Changelog (2026-02-27)
+
+### Backend
+- **Sales**: Полная переработка сериализаторов. `SaleSerializer` принимает `items_data` для позиций (вместо отдельных запросов). `SaleItemSerializer` возвращает `nomenclature_type`, `warehouse_name`, `bouquet_components` (состав букета). `_recalc_totals` учитывает `discount_percent` (глобальная скидка на чек).
+- **Sale model**: Добавлено поле `discount_percent` (DecimalField, 5,2) — процент глобальной скидки.
+- **BouquetTemplate model**: Добавлено поле `bouquet_name` (CharField, 500) — пользовательское название букета.
+- **NomenclatureGroupViewSet**: Добавлен `.distinct()` для устранения дублирования дочерних групп.
+- **Staff serializers**: `EmployeeSerializer` поддерживает `create_username`, `create_password`, `create_role` для создания учётной записи пользователя при создании сотрудника.
+- **Миграция**: `0002_bouquettemplate_bouquet_name` — добавление поля `bouquet_name`.
+
+### Frontend
+- **SalesPage**: Полностью переписана. Autocomplete для номенклатуры с отображением остатков. Поле продавца (по умолчанию — текущий пользователь). Глобальная скидка %. Статус по умолчанию «Завершена». Switch «Оплачено». Состав букета в деталях с Collapse. Ключ `items_data` для API.
+- **SettingsPage**: Удалена вкладка «Пользователи» (перенесена в Персонал). Добавлен выбор кошелька для способа оплаты. Добавлен переключатель `is_default_for_sales` для складов.
+- **StaffPage**: Добавлены поля учётной записи (логин/пароль/роль) при создании сотрудника. Отображение логина и роли в таблице.
+- **NomenclaturePage**: Поле `bouquet_name` в форме шаблона букета. Удалены поля `season_start`/`season_end` из формы номенклатуры.
+- **InventoryPage**: Вкладка «Партии» переименована в «Поступления». Индивидуальная сборка букета (ручной выбор компонентов при отсутствии шаблона).
