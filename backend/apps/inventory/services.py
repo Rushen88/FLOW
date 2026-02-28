@@ -86,8 +86,6 @@ def _update_stock_balance(organization, warehouse, nomenclature, qty_delta: Deci
         defaults={'quantity': Decimal('0'), 'avg_purchase_price': Decimal('0')},
     )
     sb.quantity += qty_delta
-    if sb.quantity < 0:
-        sb.quantity = Decimal('0')
 
     # Пересчитываем среднюю закупочную по остаткам партий
     batches = Batch.objects.filter(
