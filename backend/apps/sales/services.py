@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import models as db_models
+from django.db import transaction
 from django.db.models import Max
 
 from .models import Sale, Order, OrderStatusHistory
@@ -240,6 +241,65 @@ def sync_sale_transaction(sale):
                     pk=existing_tx.wallet_to_id
                 ).update(balance=db_models.F('balance') - existing_tx.amount)
             existing_tx.delete()
+
+
+@transaction.atomic
+def rollback_sale_effects_before_delete(sale):
+    """
+    Откатить последствия проведённой продажи перед удалением записи Sale:
+    - вернуть складские остатки/партии по движениям типа SALE этой продажи,
+    - откатить финансовые транзакции, привязанные к продаже,
+    - откатить статистику клиента.
+    """
+    from apps.inventory.models import StockMovement, Batch
+    from apps.inventory.services import _update_stock_balance
+    from apps.finance.models import Transaction, Wallet
+
+    sale_number = str(sale.number or '').strip()
+    if sale_number:
+        sale_movements = (
+            StockMovement.objects
+            .select_for_update()
+            .select_related('batch', 'warehouse_from', 'nomenclature')
+            .filter(
+                organization=sale.organization,
+                movement_type=StockMovement.MovementType.SALE,
+                notes__contains=f'#{sale_number}',
+            )
+            .order_by('-created_at')
+        )
+
+        for movement in sale_movements:
+            if movement.batch_id:
+                batch = Batch.objects.select_for_update().filter(pk=movement.batch_id).first()
+                if batch:
+                    batch.remaining = (batch.remaining or Decimal('0')) + Decimal(str(movement.quantity or 0))
+                    batch.save(update_fields=['remaining'])
+
+            if movement.warehouse_from_id and movement.nomenclature_id:
+                _update_stock_balance(
+                    organization=sale.organization,
+                    warehouse=movement.warehouse_from,
+                    nomenclature=movement.nomenclature,
+                    qty_delta=Decimal(str(movement.quantity or 0)),
+                )
+
+        sale_movements.delete()
+
+    tx_qs = Transaction.objects.select_for_update().filter(sale=sale)
+    for tx in tx_qs:
+        if tx.wallet_to_id:
+            Wallet.objects.select_for_update().filter(pk=tx.wallet_to_id).update(
+                balance=db_models.F('balance') - tx.amount
+            )
+        if tx.wallet_from_id:
+            Wallet.objects.select_for_update().filter(pk=tx.wallet_from_id).update(
+                balance=db_models.F('balance') + tx.amount
+            )
+    tx_qs.delete()
+
+    if sale.status == Sale.Status.COMPLETED and sale.is_paid and sale.customer_id:
+        update_customer_stats(sale, -sale.total, -1)
 
 
 def validate_order_status_transition(order, new_status):

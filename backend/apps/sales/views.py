@@ -1,11 +1,13 @@
 from rest_framework import viewsets, filters, status
 from rest_framework.response import Response
+from django.db import transaction as db_transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Sale, SaleItem, Order, OrderItem
 from .serializers import (
     SaleSerializer, SaleListSerializer, SaleItemSerializer,
     OrderSerializer, OrderListSerializer, OrderItemSerializer,
 )
+from .services import rollback_sale_effects_before_delete
 from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, ReadOnlyOrManager
 
 
@@ -48,6 +50,12 @@ class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         if warnings:
             data = {**data, '_warnings': warnings}
         return Response(data)
+
+    @db_transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        rollback_sale_effects_before_delete(instance)
+        return super().destroy(request, *args, **kwargs)
 
 
 class SaleItemViewSet(viewsets.ModelViewSet):
