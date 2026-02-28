@@ -259,7 +259,6 @@ def rollback_sale_effects_before_delete(sale):
     if sale_number:
         sale_movements = (
             StockMovement.objects
-            .select_for_update()
             .select_related('batch', 'warehouse_from', 'nomenclature')
             .filter(
                 organization=sale.organization,
