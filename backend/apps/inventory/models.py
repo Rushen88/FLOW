@@ -37,6 +37,9 @@ class Batch(models.Model):
         verbose_name = 'Партия'
         verbose_name_plural = 'Партии'
         ordering = ['-arrival_date']
+        indexes = [
+            models.Index(fields=['organization', 'warehouse', 'nomenclature', 'remaining'], name='idx_batch_fifo'),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(remaining__gte=0),
@@ -127,6 +130,10 @@ class StockMovement(models.Model):
         Batch, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='movements', verbose_name='Партия',
     )
+    sale = models.ForeignKey(
+        'sales.Sale', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='stock_movements', verbose_name='Продажа',
+    )
     quantity = models.DecimalField('Количество', max_digits=10, decimal_places=2)
     price = models.DecimalField('Цена', max_digits=12, decimal_places=2, default=0)
     write_off_reason = models.CharField(
@@ -145,6 +152,10 @@ class StockMovement(models.Model):
         verbose_name = 'Движение товара'
         verbose_name_plural = 'Движения товаров'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['organization', 'movement_type', 'sale'], name='idx_movement_org_type_sale'),
+            models.Index(fields=['organization', 'nomenclature', 'created_at'], name='idx_movement_org_nom_date'),
+        ]
 
     def __str__(self):
         return f'{self.get_movement_type_display()}: {self.nomenclature.name} x{self.quantity}'
@@ -212,6 +223,12 @@ class InventoryItem(models.Model):
         db_table = 'inventory_items'
         verbose_name = 'Позиция инвентаризации'
         verbose_name_plural = 'Позиции инвентаризации'
+
+    def save(self, *args, **kwargs):
+        # Автовычисление разницы
+        if self.actual_quantity is not None:
+            self.difference = self.actual_quantity - self.expected_quantity
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f'{self.nomenclature.name}: ожид.={self.expected_quantity}'

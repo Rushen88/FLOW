@@ -2,12 +2,27 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import JsonResponse
 from rest_framework_simplejwt.views import (
     TokenObtainPairView, TokenRefreshView, TokenVerifyView,
 )
 
+
+def health_check(request):
+    """Health check endpoint for Docker/load balancers."""
+    from django.db import connection
+    try:
+        connection.ensure_connection()
+        return JsonResponse({'status': 'ok', 'db': 'ok'})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'db': str(e)}, status=503)
+
+
 urlpatterns = [
     path('admin/', admin.site.urls),
+
+    # Health check
+    path('api/health/', health_check, name='health_check'),
 
     # JWT Auth
     path('api/auth/token/', TokenObtainPairView.as_view(), name='token_obtain'),

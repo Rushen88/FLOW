@@ -61,6 +61,7 @@ class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 class SaleItemViewSet(viewsets.ModelViewSet):
     serializer_class = SaleItemSerializer
     queryset = SaleItem.objects.all()
+    permission_classes = [ReadOnlyOrManager]
 
     def get_queryset(self):
         qs = SaleItem.objects.select_related('nomenclature')
@@ -74,6 +75,7 @@ class SaleItemViewSet(viewsets.ModelViewSet):
 class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     queryset = Order.objects.all()
+    permission_classes = [ReadOnlyOrManager]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status', 'source', 'trading_point', 'delivery_date']
     search_fields = ['number', 'recipient_name', 'recipient_phone']
@@ -162,6 +164,7 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
     queryset = OrderItem.objects.all()
+    permission_classes = [ReadOnlyOrManager]
 
     def get_queryset(self):
         qs = OrderItem.objects.select_related('nomenclature')

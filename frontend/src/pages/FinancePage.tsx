@@ -210,8 +210,9 @@ export default function FinancePage() {
   }, [notify])
 
   useEffect(() => { if (tab === 2) fetchCategories() }, [tab, fetchCategories])
-  // Also load categories for transactions dialog
-  useEffect(() => { fetchCategories() }, [fetchCategories])
+  // Categories are also needed for transaction create dialog — load once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchCategories() }, [])
 
   const openCatDlg = (c?: TransactionCategory) => {
     if (c) {

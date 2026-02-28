@@ -7,12 +7,13 @@ from .serializers import (
     PositionSerializer, EmployeeSerializer,
     PayrollSchemeSerializer, ShiftSerializer, SalaryAccrualSerializer,
 )
-from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, _resolve_org
+from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, _resolve_org, IsOwnerOrAdmin, IsManager
 
 
 class PositionViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = PositionSerializer
     queryset = Position.objects.all()
+    permission_classes = [IsManager]
 
     def get_queryset(self):
         qs = Position.objects.all()
@@ -27,6 +28,7 @@ class EmployeeViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     """
     serializer_class = EmployeeSerializer
     queryset = User.objects.all()
+    permission_classes = [IsOwnerOrAdmin]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['position', 'trading_point', 'is_active']
     search_fields = ['first_name', 'last_name', 'phone', 'username']
@@ -48,9 +50,10 @@ class EmployeeViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         serializer.save(organization=org)
 
 
-class PayrollSchemeViewSet(viewsets.ModelViewSet):
+class PayrollSchemeViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = PayrollSchemeSerializer
     queryset = PayrollScheme.objects.all()
+    permission_classes = [IsOwnerOrAdmin]
 
     def get_queryset(self):
         qs = PayrollScheme.objects.select_related('employee')

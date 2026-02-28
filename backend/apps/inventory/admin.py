@@ -4,14 +4,16 @@ from .models import Batch, StockBalance, StockMovement, InventoryDocument, Inven
 
 @admin.register(Batch)
 class BatchAdmin(admin.ModelAdmin):
-    list_display = ('nomenclature', 'quantity', 'remaining', 'arrival_date', 'warehouse')
-    list_filter = ('warehouse', 'arrival_date')
+    list_display = ('nomenclature', 'quantity', 'remaining', 'arrival_date', 'warehouse', 'organization')
+    list_filter = ('organization', 'warehouse', 'arrival_date')
+    readonly_fields = ('remaining',)
 
 
 @admin.register(StockBalance)
 class StockBalanceAdmin(admin.ModelAdmin):
-    list_display = ('nomenclature', 'warehouse', 'quantity', 'avg_purchase_price')
-    list_filter = ('warehouse',)
+    list_display = ('nomenclature', 'warehouse', 'quantity', 'avg_purchase_price', 'organization')
+    list_filter = ('organization', 'warehouse')
+    readonly_fields = ('quantity', 'avg_purchase_price')
 
 
 @admin.register(StockMovement)

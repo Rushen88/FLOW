@@ -59,6 +59,17 @@ class EmployeeSerializer(serializers.ModelSerializer):
             )
         return value
 
+    def validate_role(self, value):
+        """Prevent role escalation: only owners can assign owner role."""
+        request = self.context.get('request')
+        if request and value == 'owner' and not (
+            request.user.is_superuser or request.user.role == 'owner'
+        ):
+            raise serializers.ValidationError(
+                'Только владелец может назначить роль «owner».'
+            )
+        return value
+
     @staticmethod
     def _generate_username():
         """Генерация уникального служебного username вида emp_XXXXXXXX."""

@@ -10,6 +10,7 @@ from .services import (
     do_sale_fifo_write_off,
     sync_sale_transaction,
     update_customer_stats,
+    rollback_sale_effects_before_delete,
     validate_order_status_transition,
     create_order_status_history,
 )
@@ -191,6 +192,10 @@ class SaleSerializer(serializers.ModelSerializer):
         if update_fields:
             instance.save(update_fields=update_fields)
         if items_data is not None:
+            # Если продажа уже была FIFO-списана — откатить перед заменой позиций
+            was_completed_paid = (old_status == Sale.Status.COMPLETED and old_is_paid)
+            if was_completed_paid:
+                rollback_sale_effects_before_delete(instance)
             instance.items.all().delete()
             for item_data in items_data:
                 warehouse_id = item_data.pop('warehouse', None)

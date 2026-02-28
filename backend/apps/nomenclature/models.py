@@ -11,7 +11,7 @@ class NomenclatureGroup(models.Model):
     )
     name = models.CharField('Название', max_length=255)
     parent = models.ForeignKey(
-        'self', on_delete=models.CASCADE, null=True, blank=True,
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='children', verbose_name='Родительская группа',
     )
     sort_order = models.PositiveIntegerField('Порядок', default=0)

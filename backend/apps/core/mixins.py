@@ -143,10 +143,19 @@ class OrgPerformCreateMixin:
         serializer.save(**extra)
 
     def perform_update(self, serializer):
+        # При обновлении НЕ перезаписываем organization —
+        # запись должна оставаться в своём тенанте.
         org = _resolve_org(self.request.user)
         if not org:
             raise ValidationError(
                 {'organization': 'Сначала выберите организацию.'},
                 code='no_organization',
             )
-        serializer.save(organization=org)
+        # Проверяем что обновляемый объект принадлежит текущей организации
+        instance = serializer.instance
+        if hasattr(instance, 'organization_id') and instance.organization_id != org.id:
+            raise ValidationError(
+                {'organization': 'Нельзя редактировать записи другой организации.'},
+                code='wrong_organization',
+            )
+        serializer.save()

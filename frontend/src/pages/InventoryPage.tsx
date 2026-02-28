@@ -340,7 +340,7 @@ export default function InventoryPage() {
         nomenclature_name: c.nomenclature_name || allNom.find(n => n.id === c.nomenclature)?.name || '?',
         quantity: c.quantity,
         base_qty: c.quantity,
-        warehouse: getRecommendedWarehouse(c.nomenclature, parseFloat(c.quantity) * (parseInt(asmForm.quantity) || 1)),
+        warehouse: getRecommendedWarehouse(c.nomenclature, parseFloat(c.quantity) * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)),
       })))
     } else {
       setAsmCustom(true)
@@ -366,7 +366,7 @@ export default function InventoryPage() {
       const payload: Record<string, any> = {
         warehouse_from: asmForm.warehouse_from,
         warehouse_to: asmForm.warehouse_to,
-        quantity: parseInt(asmForm.quantity) || 1,
+        quantity: Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1,
         assembler: asmForm.assembler || undefined,
         add_to_templates: asmForm.add_to_templates,
         bouquet_name: asmForm.bouquet_name,
@@ -830,14 +830,14 @@ export default function InventoryPage() {
                     mb: 0.5,
                     p: 0.5,
                     borderRadius: 1,
-                    bgcolor: getAvailableQty(c.nomenclature, c.warehouse) < (parseFloat(c.quantity || '0') * (parseInt(asmForm.quantity) || 1)) ? 'error.lighter' : 'transparent',
+                    bgcolor: getAvailableQty(c.nomenclature, c.warehouse) < (parseFloat(c.quantity || '0') * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)) ? 'error.lighter' : 'transparent',
                   }}
                 >
                   <Grid size={{ xs: 4 }}>
                     <TextField select size="small" fullWidth label="Компонент" value={c.nomenclature}
                       onChange={e => {
                         const nextNom = e.target.value
-                        const need = parseFloat(c.quantity || '0') * (parseInt(asmForm.quantity) || 1)
+                        const need = parseFloat(c.quantity || '0') * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)
                         const wh = getRecommendedWarehouse(nextNom, need)
                         const upd = [...asmComponents]
                         upd[i] = { ...upd[i], nomenclature: nextNom, nomenclature_name: componentNoms.find(n => n.id === nextNom)?.name || '', warehouse: wh }
@@ -862,14 +862,14 @@ export default function InventoryPage() {
                         setAsmComponents(upd)
                       }}>
                       {getNomWarehouses(c.nomenclature)
-                        .filter(w => w.qty >= (parseFloat(c.quantity || '0') * (parseInt(asmForm.quantity) || 1)))
+                        .filter(w => w.qty >= (parseFloat(c.quantity || '0') * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)))
                         .map(w => (
                         <MenuItem key={w.id} value={w.id}>{w.name} ({w.qty})</MenuItem>
                       ))}
                     </TextField>
                   </Grid>
                   <Grid size={{ xs: 2 }}>
-                    <Typography variant="caption" color={getAvailableQty(c.nomenclature, c.warehouse) < (parseFloat(c.quantity || '0') * (parseInt(asmForm.quantity) || 1)) ? 'error.main' : 'text.secondary'}>
+                    <Typography variant="caption" color={getAvailableQty(c.nomenclature, c.warehouse) < (parseFloat(c.quantity || '0') * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)) ? 'error.main' : 'text.secondary'}>
                       Остаток: {getAvailableQty(c.nomenclature, c.warehouse)}
                     </Typography>
                   </Grid>

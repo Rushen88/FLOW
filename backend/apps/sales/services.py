@@ -103,9 +103,14 @@ def do_sale_fifo_write_off(sale):
     """
     FIFO-списание товаров со склада для позиций продажи.
     Вызывается при завершении + оплате.
+    Идемпотентна: если FIFO-списание уже выполнено — пропускает.
     """
     from apps.inventory.services import fifo_write_off, _update_stock_balance, InsufficientStockError
     from apps.inventory.models import StockMovement, Batch
+
+    # Идемпотентность: если для этой продажи уже есть SALE-движения — не списываем повторно
+    if StockMovement.objects.filter(sale=sale, movement_type=StockMovement.MovementType.SALE).exists():
+        return []
 
     warnings = []
 
@@ -167,6 +172,7 @@ def do_sale_fifo_write_off(sale):
                 batch=row['batch'],
                 quantity=row['qty'],
                 price=row['price'],
+                sale=sale,
                 notes=f'Продажа #{sale.number}',
             )
 
@@ -179,6 +185,7 @@ def do_sale_fifo_write_off(sale):
                 batch=None,
                 quantity=qty_shortage,
                 price=nom.purchase_price,
+                sale=sale,
                 notes=f'Продажа в минус #{sale.number}',
             )
             warnings.append(
@@ -255,18 +262,18 @@ def rollback_sale_effects_before_delete(sale):
     from apps.inventory.services import _update_stock_balance
     from apps.finance.models import Transaction, Wallet
 
-    sale_number = str(sale.number or '').strip()
-    if sale_number:
-        sale_movements = (
-            StockMovement.objects
-            .select_related('batch', 'warehouse_from', 'nomenclature')
-            .filter(
-                organization=sale.organization,
-                movement_type=StockMovement.MovementType.SALE,
-                notes__contains=f'#{sale_number}',
-            )
-            .order_by('-created_at')
+    # Используем FK sale вместо notes__contains для надёжного поиска движений
+    sale_movements = (
+        StockMovement.objects
+        .select_related('batch', 'warehouse_from', 'nomenclature')
+        .filter(
+            organization=sale.organization,
+            movement_type=StockMovement.MovementType.SALE,
+            sale=sale,
         )
+        .order_by('-created_at')
+    )
+    if sale_movements.exists():
 
         for movement in sale_movements:
             if movement.batch_id:

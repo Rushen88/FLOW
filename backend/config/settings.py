@@ -12,13 +12,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Загружаем переменные окружения из файла .env
 load_dotenv(BASE_DIR / '.env')
 
-SECRET_KEY = os.getenv(
-    'DJANGO_SECRET_KEY',
-    'django-insecure-k#8j1m#p1vx7&-w7+emo9*k0ml+8a5(xz##49!w!q%=mx$1^v9',
-)
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    import warnings
+    warnings.warn('DJANGO_SECRET_KEY not set! Using insecure default. SET IT IN PRODUCTION!', stacklevel=1)
+    SECRET_KEY = 'django-insecure-k#8j1m#p1vx7&-w7+emo9*k0ml+8a5(xz##49!w!q%=mx$1^v9'
 
-DEBUG = os.getenv('DJANGO_DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', '*').split(',')
+DEBUG = os.getenv('DJANGO_DEBUG', 'False') == 'True'
+ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+
+# --------------- SECURITY (production) ---------------
+if not DEBUG:
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False') == 'True'
 
 # --------------- APPS ---------------
 INSTALLED_APPS = [

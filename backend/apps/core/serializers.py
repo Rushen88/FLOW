@@ -75,6 +75,11 @@ class UserCreateSerializer(serializers.ModelSerializer):
                   'last_name', 'patronymic', 'phone', 'role', 'organization']
         read_only_fields = ['organization']
 
+    def validate_password(self, value):
+        from django.contrib.auth.password_validation import validate_password
+        validate_password(value)
+        return value
+
     def create(self, validated_data):
         password = validated_data.pop('password')
         user = User(**validated_data)

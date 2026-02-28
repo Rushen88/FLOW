@@ -79,6 +79,8 @@ def build_stock_summary(organization, trading_point_id=None, warehouse_id=None):
 
 def _update_stock_balance(organization, warehouse, nomenclature, qty_delta: Decimal):
     """Обновить (или создать) StockBalance по складу + номенклатуре."""
+    from django.db.models import Sum, F
+
     sb, created = StockBalance.objects.get_or_create(
         organization=organization,
         warehouse=warehouse,
@@ -87,17 +89,19 @@ def _update_stock_balance(organization, warehouse, nomenclature, qty_delta: Deci
     )
     sb.quantity += qty_delta
 
-    # Пересчитываем среднюю закупочную по остаткам партий
-    batches = Batch.objects.filter(
+    # Пересчитываем среднюю закупочную через DB aggregate (вместо Python-loop)
+    agg = Batch.objects.filter(
         organization=organization,
         warehouse=warehouse,
         nomenclature=nomenclature,
         remaining__gt=0,
+    ).aggregate(
+        total_remaining=Sum('remaining'),
+        total_cost=Sum(F('remaining') * F('purchase_price')),
     )
-    total_remaining = sum(b.remaining for b in batches)
+    total_remaining = agg['total_remaining'] or Decimal('0')
     if total_remaining > 0:
-        total_cost = sum(b.remaining * b.purchase_price for b in batches)
-        sb.avg_purchase_price = total_cost / total_remaining
+        sb.avg_purchase_price = (agg['total_cost'] or Decimal('0')) / total_remaining
     sb.save()
     return sb
 
@@ -289,6 +293,7 @@ def process_sale_items(sale, items_data, user=None):
                 batch=r['batch'],
                 quantity=r['qty'],
                 price=r['price'],
+                sale=sale,
                 user=user,
                 notes=f'Продажа #{sale.number}',
             )
@@ -469,7 +474,7 @@ def disassemble_bouquet(
         )
         _update_stock_balance(organization, warehouse, comp_nom, comp_qty)
 
-    # 3. Списание компонентов
+    # 3. Списание компонентов (через FIFO + обновление StockBalance)
     for item in writeoff_items:
         comp_nom = item['nomenclature']
         comp_qty = Decimal(str(item['quantity']))
@@ -477,17 +482,41 @@ def disassemble_bouquet(
         if comp_qty <= 0:
             continue
 
-        StockMovement.objects.create(
-            organization=organization,
-            nomenclature=comp_nom,
-            movement_type=StockMovement.MovementType.WRITE_OFF,
-            warehouse_from=warehouse,
-            quantity=comp_qty,
-            price=comp_nom.purchase_price,
-            write_off_reason=reason,
-            user=user,
-            notes=f'Списание из раскомплектовки: {nomenclature_bouquet.name}',
-        )
+        try:
+            wo_result = fifo_write_off(
+                organization=organization,
+                warehouse=warehouse,
+                nomenclature=comp_nom,
+                quantity=comp_qty,
+                user=user,
+            )
+            for r in wo_result:
+                StockMovement.objects.create(
+                    organization=organization,
+                    nomenclature=comp_nom,
+                    movement_type=StockMovement.MovementType.WRITE_OFF,
+                    warehouse_from=warehouse,
+                    batch=r['batch'],
+                    quantity=r['qty'],
+                    price=r['price'],
+                    write_off_reason=reason,
+                    user=user,
+                    notes=f'Списание из раскомплектовки: {nomenclature_bouquet.name}',
+                )
+        except InsufficientStockError:
+            # Если партий не хватает — списываем без привязки к партии
+            StockMovement.objects.create(
+                organization=organization,
+                nomenclature=comp_nom,
+                movement_type=StockMovement.MovementType.WRITE_OFF,
+                warehouse_from=warehouse,
+                quantity=comp_qty,
+                price=comp_nom.purchase_price,
+                write_off_reason=reason,
+                user=user,
+                notes=f'Списание из раскомплектовки: {nomenclature_bouquet.name}',
+            )
+        _update_stock_balance(organization, warehouse, comp_nom, -comp_qty)
 
     return True
 

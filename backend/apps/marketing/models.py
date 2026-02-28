@@ -73,6 +73,18 @@ class Discount(models.Model):
     apply_to = models.CharField(
         'Применять к', max_length=20, choices=ApplyTo.choices, default=ApplyTo.ALL,
     )
+    target_group = models.ForeignKey(
+        'nomenclature.NomenclatureGroup', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='discounts',
+        verbose_name='Целевая группа',
+        help_text='Заполнить при apply_to=group',
+    )
+    target_nomenclature = models.ForeignKey(
+        'nomenclature.Nomenclature', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='discounts',
+        verbose_name='Целевая номенклатура',
+        help_text='Заполнить при apply_to=nomenclature',
+    )
     min_purchase = models.DecimalField(
         'Мин. сумма покупки', max_digits=12, decimal_places=2, default=0,
     )

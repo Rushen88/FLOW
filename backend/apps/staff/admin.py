@@ -4,7 +4,8 @@ from .models import Position, PayrollScheme, Shift, SalaryAccrual
 
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
-    list_display = ('name', 'base_salary')
+    list_display = ('name', 'base_salary', 'organization')
+    list_filter = ('organization',)
 
 
 @admin.register(PayrollScheme)
