@@ -670,6 +670,10 @@ npm run dev                       # → http://localhost:3000
 
 ## Changelog (2026-03-02) — Исправления доступа и улучшения UX продаж
 
+### Hotfix (2026-03-01) — Ошибка 500 при создании продажи/заказа
+- **sales/serializers.py**: устранена причина `Server Error 500` в `SaleSerializer.create()` и `OrderSerializer.create()` — ранее использовался `validated_data['organization_id']`, которого нет при `perform_create(serializer.save(organization=org))`.
+- Добавлена безопасная обработка через объект `organization` + явная `ValidationError`, если организация отсутствует.
+
 ### Критические исправления
 - **core/views.py**: `TradingPointViewSet`, `WarehouseViewSet`, `PaymentMethodViewSet` — READ-доступ открыт для всех аутентифицированных (раньше только owner/admin). Запись остаётся за owner/admin. Это исправляло: «Ошибка загрузки данных дашборда», «Ошибка загрузки остатков», «Server Error 500» на странице Продажи.
 - **finance/views.py**: `WalletViewSet` — summary и list доступны всем аутентифицированным (раньше только owner/admin), запись — owner/admin.
