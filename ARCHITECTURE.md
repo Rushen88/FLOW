@@ -878,3 +878,7 @@ npm run dev                       # → http://localhost:3000
 - ✅ Усилена tenant-безопасность при `TransactionViewSet.perform_update`: добавлена обязательная повторная проверка принадлежности кошельков организации
 - ✅ Усилена конкурентная безопасность на update/destroy транзакций: добавлены блокировки `select_for_update` на изменяемую транзакцию перед откатом/применением баланса
 - ✅ Добавлены базовые инварианты для переводов: `transfer` требует `wallet_from + wallet_to`, кошельки перевода не могут совпадать
+
+#### Runtime stability (2026-03-01)
+
+- ✅ Устранён `UnorderedObjectListWarning` для `TradingPoint` (нестабильная пагинация): в `core/views.py` добавлена явная сортировка queryset `order_by('name', 'id')`

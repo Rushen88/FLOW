@@ -284,7 +284,7 @@ class TradingPointViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = TradingPoint.objects.select_related('organization', 'manager')
-        return _tenant_filter(qs, self.request.user)
+        return _tenant_filter(qs, self.request.user).order_by('name', 'id')
 
 
 class WarehouseViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
