@@ -170,6 +170,18 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Допустимые переходы между статусами
+    ALLOWED_TRANSITIONS = {
+        Status.NEW: [Status.CONFIRMED, Status.CANCELLED],
+        Status.CONFIRMED: [Status.IN_ASSEMBLY, Status.CANCELLED],
+        Status.IN_ASSEMBLY: [Status.ASSEMBLED, Status.CANCELLED],
+        Status.ASSEMBLED: [Status.ON_DELIVERY, Status.COMPLETED, Status.CANCELLED],
+        Status.ON_DELIVERY: [Status.DELIVERED, Status.CANCELLED],
+        Status.DELIVERED: [Status.COMPLETED],
+        Status.COMPLETED: [],  # Финальный статус
+        Status.CANCELLED: [],  # Финальный статус
+    }
+
     class Meta:
         db_table = 'orders'
         verbose_name = 'Заказ'
@@ -178,6 +190,48 @@ class Order(models.Model):
 
     def __str__(self):
         return f'Заказ #{self.number}'
+
+    def can_transition_to(self, new_status: str) -> bool:
+        """Проверяет возможность перехода в указанный статус."""
+        allowed = self.ALLOWED_TRANSITIONS.get(self.status, [])
+        return new_status in allowed
+
+    def transition_to(self, new_status: str, user=None, comment: str = '') -> bool:
+        """
+        Безопасно переводит заказ в новый статус.
+        
+        Args:
+            new_status: Новый статус заказа
+            user: Пользователь, выполняющий переход
+            comment: Комментарий к переходу
+            
+        Returns:
+            True если переход успешен
+            
+        Raises:
+            ValueError: Если переход недопустим
+        """
+        if not self.can_transition_to(new_status):
+            allowed = self.ALLOWED_TRANSITIONS.get(self.status, [])
+            allowed_names = [self.Status(s).label for s in allowed]
+            raise ValueError(
+                f'Недопустимый переход из "{self.get_status_display()}" в "{self.Status(new_status).label}". '
+                f'Допустимые переходы: {", ".join(allowed_names) or "нет"}'
+            )
+        
+        old_status = self.status
+        self.status = new_status
+        self.save(update_fields=['status', 'updated_at'])
+        
+        # Логируем переход
+        OrderStatusHistory.objects.create(
+            order=self,
+            old_status=old_status,
+            new_status=new_status,
+            changed_by=user,
+            comment=comment,
+        )
+        return True
 
 
 class OrderItem(models.Model):

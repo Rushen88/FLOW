@@ -1,0 +1,21 @@
+{
+  "include": ["apps", "config"],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/migrations",
+    "**/.git",
+    "**/.venv",
+    "**/.venv-1",
+    "**/build",
+    "**/dist",
+    "**/*.egg-info"
+  ],
+  "venvPath": "d:/B2B/FLOW",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none",
+  "extraPaths": ["d:/B2B/FLOW/.venv/Lib/site-packages"]
+}

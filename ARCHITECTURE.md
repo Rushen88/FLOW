@@ -765,17 +765,22 @@ npm run dev                       # → http://localhost:3000
 
 ## Tech Debt / Known Issues
 
-Результаты архитектурного аудита (оценка готовности к production: ~60%).
+Результаты архитектурного аудита (оценка готовности к production: ~75%).
 
 ### Критические проблемы (требуют решения)
 
 | # | Проблема | Локация | Приоритет |
 |---|----------|---------|-----------|
 | 1 | ~~Customer.total_purchases не обновлялся~~ | sales/serializers.py | ✅ FIXED |
-| 2 | Возможные race conditions при генерации номеров (sale/order) | sales/serializers.py | HIGH |
-| 3 | Бизнес-логика в сериализаторах вместо services | sales, inventory | MEDIUM |
-| 4 | Нет audit-лога изменений (кто, что, когда) | Все приложения | MEDIUM |
-| 5 | Нет системы уведомлений (email/push) | Проект | MEDIUM |
+| 2 | ~~Race condition в FIFO write-off~~ | inventory/services.py | ✅ FIXED |
+| 3 | ~~Order status переходы без валидации~~ | sales/models.py | ✅ FIXED |
+| 4 | ~~Нет Code Splitting~~ | frontend/App.tsx | ✅ FIXED |
+| 5 | ~~Нет Error Boundary~~ | frontend/App.tsx | ✅ FIXED |
+| 6 | ~~UniqueConstraints отсутствуют~~ | core, inventory, customers, marketing | ✅ FIXED |
+| 7 | Возможные race conditions при генерации номеров (sale/order) | sales/serializers.py | HIGH |
+| 8 | Бизнес-логика в сериализаторах вместо services | sales, inventory | MEDIUM |
+| 9 | Нет audit-лога изменений (кто, что, когда) | Все приложения | MEDIUM |
+| 10 | Нет системы уведомлений (email/push) | Проект | MEDIUM |
 
 ### Архитектурные улучшения (roadmap)
 
@@ -785,7 +790,8 @@ npm run dev                       # → http://localhost:3000
 | **Frontend — форматтеры** | Дублирование функций | ~~Создать shared/formatters.ts~~ ✅ |
 | **Frontend — константы** | Хардкод в компонентах | ~~Создать shared/constants.ts~~ ✅ |
 | **Frontend — God Components** | SalesPage ~1000+ строк | Разбить на hooks + sub-components |
-| **Frontend — Code Splitting** | Всё в одном bundle | React.lazy() + Suspense |
+| **Frontend — Code Splitting** | ~~Всё в одном bundle~~ | ~~React.lazy() + Suspense~~ ✅ |
+| **Frontend — Error Boundary** | ~~Отсутствует~~ | ~~ErrorBoundary class component~~ ✅ |
 | **Backend — services layer** | Логика в serializers | Выделить business logic в services/ |
 | **Backend — audit log** | Отсутствует | django-auditlog или custom middleware |
 | **Backend — notifications** | Отсутствует | Celery + email/telegram |
@@ -802,3 +808,41 @@ npm run dev                       # → http://localhost:3000
 - ✅ JWT с ротацией токенов
 - ⚠️ Rate limiting рекомендуется (django-ratelimit)
 - ⚠️ CORS origins в production должны быть ограничены
+
+---
+
+## Changelog
+
+### 2025-01-XX — Архитектурный аудит и исправления
+
+#### Backend
+
+**inventory/services.py**
+- ✅ Добавлен `@transaction.atomic` для `fifo_write_off()` — критическое исправление race condition при использовании `select_for_update()`
+
+**sales/models.py**
+- ✅ Добавлен `ALLOWED_TRANSITIONS` — конечный автомат допустимых переходов статусов заказа
+- ✅ Добавлен метод `can_transition_to(new_status)` — проверка допустимости перехода
+- ✅ Добавлен метод `transition_to(new_status, user, comment)` — безопасный переход с логированием в OrderStatusHistory
+
+**core/models.py**
+- ✅ TradingPoint: добавлен `UniqueConstraint(fields=['organization', 'name'])`
+- ✅ Warehouse: добавлен `UniqueConstraint(fields=['organization', 'trading_point', 'name'])`
+
+**inventory/models.py**
+- ✅ Batch: добавлен `CheckConstraint(remaining >= 0)` — защита от отрицательных остатков
+- ✅ StockBalance: заменён `unique_together` на `UniqueConstraint(fields=['organization', 'warehouse', 'nomenclature'])`
+
+**customers/models.py**
+- ✅ Customer: добавлен `UniqueConstraint(fields=['organization', 'phone'], condition=Q(phone__gt=''))` — уникальность телефона в рамках организации
+
+**marketing/models.py**
+- ✅ PromoCode: добавлен `UniqueConstraint(fields=['organization', 'code'])` — уникальность промокода в рамках организации
+
+#### Frontend
+
+**App.tsx**
+- ✅ Code Splitting: все страницы загружаются через `React.lazy()` (~15 компонентов)
+- ✅ Error Boundary: добавлен class component с fallback UI и кнопкой "Обновить страницу"
+- ✅ PageLoader: добавлен компонент загрузки для Suspense fallback
+- ✅ Каждый Route обёрнут в `<Suspense fallback={<PageLoader />}>`

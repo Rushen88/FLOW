@@ -124,6 +124,12 @@ class TradingPoint(models.Model):
         db_table = 'trading_points'
         verbose_name = 'Торговая точка'
         verbose_name_plural = 'Торговые точки'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'name'],
+                name='unique_trading_point_name_per_org'
+            ),
+        ]
 
     def __str__(self):
         return self.name
@@ -166,6 +172,12 @@ class Warehouse(models.Model):
         db_table = 'warehouses'
         verbose_name = 'Склад'
         verbose_name_plural = 'Склады'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'trading_point', 'name'],
+                name='unique_warehouse_name_per_trading_point'
+            ),
+        ]
 
     def __str__(self):
         return f'{self.name} ({self.trading_point.name})'

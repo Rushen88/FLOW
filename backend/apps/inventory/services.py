@@ -56,12 +56,16 @@ def _update_stock_balance(organization, warehouse, nomenclature, qty_delta: Deci
     return sb
 
 
+@transaction.atomic
 def fifo_write_off(organization, warehouse, nomenclature, quantity: Decimal, user=None):
     """
     FIFO-списание: снимаем `quantity` единиц товара с самых старых партий.
 
     Возвращает список dict: [{'batch': Batch, 'qty': Decimal, 'price': Decimal}, ...]
     Бросает InsufficientStockError если не хватает.
+    
+    ВАЖНО: функция должна вызываться внутри транзакции или сама создаёт атомарную транзакцию.
+    select_for_update() блокирует строки до завершения транзакции.
     """
     batches = (
         Batch.objects.filter(

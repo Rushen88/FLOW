@@ -111,6 +111,12 @@ class PromoCode(models.Model):
         db_table = 'promo_codes'
         verbose_name = 'Промокод'
         verbose_name_plural = 'Промокоды'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'code'],
+                name='unique_promo_code_per_org'
+            ),
+        ]
 
     def __str__(self):
         return self.code

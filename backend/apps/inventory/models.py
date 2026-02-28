@@ -37,6 +37,12 @@ class Batch(models.Model):
         verbose_name = 'Партия'
         verbose_name_plural = 'Партии'
         ordering = ['-arrival_date']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(remaining__gte=0),
+                name='batch_remaining_non_negative'
+            ),
+        ]
 
     def __str__(self):
         return f'{self.nomenclature.name} — {self.quantity} ({self.arrival_date})'
@@ -67,7 +73,12 @@ class StockBalance(models.Model):
         db_table = 'stock_balances'
         verbose_name = 'Остаток'
         verbose_name_plural = 'Остатки'
-        unique_together = ['warehouse', 'nomenclature']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'warehouse', 'nomenclature'],
+                name='unique_stock_balance_per_org_warehouse_nomenclature'
+            ),
+        ]
 
     def __str__(self):
         return f'{self.nomenclature.name} @ {self.warehouse.name}: {self.quantity}'

@@ -70,6 +70,13 @@ class Customer(models.Model):
         db_table = 'customers'
         verbose_name = 'Клиент'
         verbose_name_plural = 'Клиенты'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'phone'],
+                name='unique_customer_phone_per_org',
+                condition=models.Q(phone__gt=''),
+            ),
+        ]
 
     def __str__(self):
         return f'{self.first_name} {self.last_name}'.strip()
