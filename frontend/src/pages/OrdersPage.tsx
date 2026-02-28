@@ -258,6 +258,22 @@ export default function OrdersPage() {
   }
 
   // ─── Delete ───
+  
+  const [checkoutLoading, setCheckoutLoading] = useState(false)
+  const handleCheckout = async () => {
+    if (!detailOrder) return
+    setCheckoutLoading(true)
+    try {
+      const res = await api.post(`/sales/orders/${detailOrder.id}/checkout/`)
+      notify('Разделили: чек успешно создан и товары списаны со склада (смена обновлена)')
+      setDetailDlg(false)
+      fetchOrders()
+    } catch (err) {
+      notify(extractError(err, 'Ошибка при пробитии чека (нет открытой смены?)'), 'error')
+    }
+    setCheckoutLoading(false)
+  }
+
   const [delOrder, setDelOrder] = useState<Order | null>(null)
 
   const removeOrder = async () => {
@@ -308,7 +324,7 @@ export default function OrdersPage() {
   // ─── Render ───
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box sx={{ display: "flex", justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h5" fontWeight={700}>Заказы</Typography>
         <Button variant="contained" startIcon={<Add />} onClick={openCreateDlg}>
           Новый заказ
@@ -316,7 +332,7 @@ export default function OrdersPage() {
       </Box>
 
       {/* Filters */}
-      <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+      <Box sx={{ display: "flex", gap: 2, mb: 2, flexWrap: 'wrap' }}>
         <TextField
           select size="small" label="Статус" value={filterStatus}
           onChange={e => { setFilterStatus(e.target.value); setPage(1) }}
@@ -496,7 +512,7 @@ export default function OrdersPage() {
 
         {/* ─── Order items ─── */}
         <Divider sx={{ my: 1 }} />
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ display: "flex", justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="subtitle1" fontWeight={600}>Позиции заказа</Typography>
           <Button size="small" startIcon={<AddCircleOutline />} onClick={addItemRow}>Добавить</Button>
         </Box>
@@ -546,7 +562,7 @@ export default function OrdersPage() {
         ))}
 
         <Divider sx={{ my: 1 }} />
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 4, flexWrap: 'wrap' }}>
+        <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 4, flexWrap: 'wrap' }}>
           <Typography variant="body2" color="text.secondary">Подитог: <b>{fmtCurrency(calcSubtotal())}</b></Typography>
           <Typography variant="body2" color="text.secondary">Скидка: <b>{fmtCurrency(calcDiscount())}</b></Typography>
           <Typography variant="body2" color="text.secondary">Доставка: <b>{fmtCurrency(parseFloat(orderForm.delivery_cost) || 0)}</b></Typography>
@@ -567,7 +583,7 @@ export default function OrdersPage() {
         {detailOrder && (
           <>
             {/* Status change */}
-            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 1 }}>
+            <Box sx={{ display: "flex", gap: 2, alignItems: 'center', mb: 1 }}>
               <Typography variant="subtitle2" color="text.secondary">Текущий статус:</Typography>
               {statusChip(detailOrder.status)}
               <TextField
@@ -580,6 +596,18 @@ export default function OrdersPage() {
                   <MenuItem key={s.value} value={s.value}>{s.label}</MenuItem>
                 ))}
               </TextField>
+            </Box>
+            <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 2 }}>
+              <Button 
+                variant="contained" 
+                color="success" 
+                disabled={statusChanging || checkoutLoading || detailOrder.status === 'completed' || detailOrder.status === 'cancelled'} 
+                onClick={handleCheckout}
+                startIcon={<ShoppingBag />}
+                size="medium"
+              >
+                {detailOrder.status === 'completed' ? 'Чек создан' : 'Пробить Чек / Выдать'}
+              </Button>
             </Box>
 
             <Divider />
@@ -688,7 +716,7 @@ export default function OrdersPage() {
             {detailItems.length === 0 ? (
               <Typography color="text.secondary">Нет позиций</Typography>
             ) : (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              <Box sx={{ display: "flex", flexDirection: 'column', gap: 0.5 }}>
                 <Grid container spacing={1} sx={{ fontWeight: 600, fontSize: '0.8rem', color: 'text.secondary' }}>
                   <Grid size={4}>Наименование</Grid>
                   <Grid size={2} sx={{ textAlign: 'right' }}>Кол-во</Grid>
@@ -713,11 +741,11 @@ export default function OrdersPage() {
               <>
                 <Divider sx={{ my: 1 }} />
                 <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>История статусов</Typography>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Box sx={{ display: "flex", flexDirection: 'column', gap: 1 }}>
                   {detailOrder.status_history.map((entry, idx) => {
                     const st = STATUS_CHOICES.find(s => s.value === entry.status)
                     return (
-                      <Box key={entry.id || idx} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
+                      <Box key={entry.id || idx} sx={{ display: "flex", alignItems: 'flex-start', gap: 1.5 }}>
                         <Chip
                           label={st?.label || entry.status}
                           size="small"
@@ -736,7 +764,7 @@ export default function OrdersPage() {
             )}
 
             <Divider sx={{ my: 1 }} />
-            <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
+            <Box sx={{ display: "flex", justifyContent: 'flex-start' }}>
               <Button
                 color="error" variant="outlined" startIcon={<Delete />}
                 onClick={() => { setDelOrder(detailOrder); setDetailDlg(false) }}

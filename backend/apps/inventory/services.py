@@ -212,6 +212,21 @@ def process_batch_receipt(
             sn.price = purchase_price
             sn.save(update_fields=['price'])
 
+        # Enterprise Architecture: Автоматическое создание обязательства (Debt) перед поставщиком
+        # Приходуя товар, бизнес становится должен поставщику, пока не будет проведена транзакция оплаты.
+        from apps.finance.models import Debt
+        total_batch_cost = quantity * purchase_price
+        if total_batch_cost > 0:
+            Debt.objects.create(
+                organization=organization,
+                debt_type=Debt.DebtType.SUPPLIER,
+                direction=Debt.Direction.WE_OWE,
+                counterparty_name=supplier.name,
+                supplier=supplier,
+                amount=total_batch_cost,
+                notes=f'За поставку партии {nomenclature.name} ({quantity} шт). Накладная: {invoice_number}'
+            )
+
     return batch
 
 

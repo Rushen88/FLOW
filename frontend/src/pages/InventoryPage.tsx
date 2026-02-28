@@ -5,7 +5,7 @@ import {
   ToggleButtonGroup, ToggleButton,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
-import { Add, Edit, Delete, Inventory2, LocalShipping, SwapHoriz, AutoAwesome, CallSplit, AutoFixHigh, ListAlt, Tune } from '@mui/icons-material'
+import { Add, Edit, Delete, Inventory2, LocalShipping, SwapHoriz, RemoveCircleOutline, AutoAwesome, CallSplit, AutoFixHigh, ListAlt, Tune } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import api from '../api'
 import { useAuth } from '../contexts/AuthContext'
@@ -272,6 +272,10 @@ export default function InventoryPage() {
   const [corrForm, setCorrForm] = useState({ nomenclature_bouquet: '', warehouse: '' })
   const [corrRows, setCorrRows] = useState<{ nomenclature: string; name: string; base_qty: string; writeoff_qty: string; return_qty: string; add_qty: string; reason: string; return_warehouse: string; add_warehouse: string }[]>([])
   const [corrSaving, setCorrSaving] = useState(false)
+  const [writeOffDlg, setWriteOffDlg] = useState(false)
+  const [writeOffForm, setWriteOffForm] = useState({ warehouse: '', nomenclature: '', quantity: '1', reason: 'expired', notes: '' })
+  const [writeOffSaving, setWriteOffSaving] = useState(false)
+
 
   const bouquetNoms = allNom.filter(n => n.nomenclature_type === 'bouquet' || n.nomenclature_type === 'composition')
 
@@ -433,6 +437,26 @@ export default function InventoryPage() {
     setDasmSaving(false)
   }
 
+  
+  const openWriteOffDlg = () => {
+    setWriteOffForm({ warehouse: '', nomenclature: '', quantity: '1', reason: 'expired', notes: '' })
+    setWriteOffDlg(true)
+  }
+
+  const submitWriteOff = async () => {
+    try {
+      setWriteOffSaving(true)
+      await api.post('/inventory/movements/write-off/', writeOffForm)
+      notify('Ручное списание успешно выполнено', 'success')
+      setWriteOffDlg(false)
+      fetchStock()
+    } catch (e) {
+      notify(extractError(e), 'error')
+    } finally {
+      setWriteOffSaving(false)
+    }
+  }
+
   const submitCorrection = async () => {
     setCorrSaving(true)
     try {
@@ -471,6 +495,7 @@ export default function InventoryPage() {
         <Typography variant="h5" fontWeight={700} sx={{ flex: 1 }}>Склад</Typography>
         <Button variant="outlined" startIcon={<AutoAwesome />} onClick={() => openAsmDlg()}>Собрать букет</Button>
         <Button variant="outlined" color="warning" startIcon={<CallSplit />} onClick={openDasmDlg}>Раскомплектовать</Button>
+        <Button variant="outlined" color="error" startIcon={<RemoveCircleOutline />} onClick={openWriteOffDlg}>Списание</Button>
       </Box>
       <Card>
         <CardContent>
@@ -1084,6 +1109,34 @@ export default function InventoryPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* ═══ Write-Off Dialog ═══ */}
+      <EntityFormDialog
+        open={writeOffDlg}
+        onClose={() => setWriteOffDlg(false)}
+        onSubmit={submitWriteOff}
+        title="Ручное списание"
+        loading={writeOffSaving}
+        submitText="Списать"
+      >
+        <TextField label="Склад" required select fullWidth value={writeOffForm.warehouse}
+          onChange={e => setWriteOffForm({...writeOffForm, warehouse: e.target.value})}>
+          {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
+        </TextField>
+        <TextField label="Номенклатура" required select fullWidth value={writeOffForm.nomenclature}
+          onChange={e => setWriteOffForm({...writeOffForm, nomenclature: e.target.value})}>
+          {allNom.filter(n => n.nomenclature_type !== 'service').map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
+        </TextField>
+        <TextField label="Количество" required type="number" fullWidth value={writeOffForm.quantity}
+          inputProps={{ min: 1 }}
+          onChange={e => setWriteOffForm({...writeOffForm, quantity: e.target.value})} />
+        <TextField label="Причина" required select fullWidth value={writeOffForm.reason}
+          onChange={e => setWriteOffForm({...writeOffForm, reason: e.target.value})}>
+          {WRITE_OFF_REASONS.map(r => <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>)}
+        </TextField>
+        <TextField label="Примечания" fullWidth multiline rows={2} value={writeOffForm.notes}
+          onChange={e => setWriteOffForm({...writeOffForm, notes: e.target.value})} />
+      </EntityFormDialog>
     </Box>
   )
 }

@@ -163,6 +163,14 @@ class Debt(models.Model):
         'Направление', max_length=20, choices=Direction.choices,
     )
     counterparty_name = models.CharField('Контрагент', max_length=255)
+    supplier = models.ForeignKey(
+        'suppliers.Supplier', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='debts', verbose_name='Поставщик',
+    )
+    customer = models.ForeignKey(
+        'customers.Customer', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='debts', verbose_name='Клиент',
+    )
     amount = models.DecimalField('Сумма', max_digits=14, decimal_places=2)
     paid_amount = models.DecimalField(
         'Оплачено', max_digits=14, decimal_places=2, default=0,

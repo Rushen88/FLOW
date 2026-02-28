@@ -1,4 +1,5 @@
 from rest_framework import viewsets, filters, status
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import transaction as db_transaction
 from django_filters.rest_framework import DjangoFilterBackend
@@ -18,7 +19,6 @@ class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['status', 'trading_point', 'is_paid']
     ordering_fields = ['created_at', 'total']
-
     def get_serializer_class(self):
         if self.action == 'list':
             return SaleListSerializer
@@ -78,6 +78,76 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     filterset_fields = ['status', 'source', 'trading_point', 'delivery_date']
     search_fields = ['number', 'recipient_name', 'recipient_phone']
     ordering_fields = ['created_at', 'delivery_date', 'total']
+
+    @action(detail=True, methods=['post'], url_path='checkout')
+    @db_transaction.atomic
+    def checkout(self, request, pk=None):
+        """Превращает заказ в продажу (чек): создаёт Sale + SaleItems, запускает FIFO-списание и финансовые проводки."""
+        from django.utils import timezone
+        from apps.finance.models import CashShift
+        from apps.sales.models import Sale, SaleItem
+        from apps.sales.services import (
+            lock_organization_row, generate_sale_number,
+            do_sale_fifo_write_off, sync_sale_transaction, update_customer_stats,
+        )
+
+        order = self.get_object()
+
+        # Защита от дублей
+        if order.sales.exists():
+            return Response({'detail': 'Чек по этому заказу уже существует.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Блокировка организации для генерации номера
+        lock_organization_row(order.organization_id)
+
+        # Кассовая смена
+        active_shift = CashShift.objects.filter(
+            trading_point=order.trading_point,
+            status=CashShift.Status.OPEN,
+        ).order_by('-opened_at').first()
+
+        sale = Sale.objects.create(
+            number=generate_sale_number(order.organization),
+            organization=order.organization,
+            trading_point=order.trading_point,
+            status=Sale.Status.COMPLETED,
+            customer=order.customer,
+            seller=request.user,
+            order=order,
+            subtotal=order.subtotal,
+            discount_amount=order.discount_amount,
+            total=order.total - order.prepayment,
+            payment_method=order.payment_method,
+            cash_shift=active_shift,
+            is_paid=True,
+            completed_at=timezone.now(),
+        )
+        for item in order.items.select_related('nomenclature').all():
+            SaleItem.objects.create(
+                sale=sale,
+                nomenclature=item.nomenclature,
+                quantity=item.quantity,
+                price=item.price,
+                discount_percent=item.discount_percent,
+                total=item.total,
+                is_custom_bouquet=item.is_custom_bouquet,
+            )
+
+        # Бизнес-логика: FIFO-списание, финансовая проводка, статистика клиента
+        do_sale_fifo_write_off(sale)
+        sync_sale_transaction(sale)
+        if sale.customer:
+            update_customer_stats(sale, sale.total, 1)
+
+        # Безопасный переход статуса через transition_to (с аудит-логом)
+        try:
+            order.transition_to('completed', user=request.user, comment='Checkout — чек создан')
+        except ValueError:
+            # Если прямой переход невозможен — ставим напрямую (заказ мог быть в любом промежуточном статусе)
+            order.status = Order.Status.COMPLETED
+            order.save(update_fields=['status', 'updated_at'])
+
+        return Response({'detail': 'Продажа успешно создана', 'sale_id': str(sale.id)}, status=status.HTTP_201_CREATED)
 
     def get_serializer_class(self):
         if self.action == 'list':

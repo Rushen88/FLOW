@@ -5,6 +5,7 @@ from .models import Batch, StockBalance, StockMovement, InventoryDocument, Inven
 class BatchSerializer(serializers.ModelSerializer):
     nomenclature_name = serializers.CharField(source='nomenclature.name', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True, default='')
 
     def validate_nomenclature(self, value):
         if getattr(value, 'nomenclature_type', '') == 'service':
@@ -29,6 +30,8 @@ class StockBalanceSerializer(serializers.ModelSerializer):
 
 class StockMovementSerializer(serializers.ModelSerializer):
     nomenclature_name = serializers.CharField(source='nomenclature.name', read_only=True)
+    warehouse_from_name = serializers.CharField(source='warehouse_from.name', read_only=True, default='')
+    warehouse_to_name = serializers.CharField(source='warehouse_to.name', read_only=True, default='')
 
     def validate_nomenclature(self, value):
         if getattr(value, 'nomenclature_type', '') == 'service':
@@ -51,6 +54,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
 
 class InventoryDocumentSerializer(serializers.ModelSerializer):
     items = InventoryItemSerializer(many=True, read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True, default='')
 
     class Meta:
         model = InventoryDocument

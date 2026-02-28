@@ -79,7 +79,7 @@ class SaleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sale
         fields = '__all__'
-        read_only_fields = ['organization']
+        read_only_fields = ['organization', 'is_paid', 'completed_at']
 
     def get_customer_name(self, obj):
         return str(obj.customer) if obj.customer else ''
@@ -131,6 +131,12 @@ class SaleSerializer(serializers.ModelSerializer):
             sale.number = generate_sale_number(sale.organization)
             sale.save(update_fields=['number'])
 
+        # Установка даты завершения при создании завершённой продажи
+        if sale.status == Sale.Status.COMPLETED and not sale.completed_at:
+            from django.utils import timezone
+            sale.completed_at = timezone.now()
+            sale.save(update_fields=['completed_at'])
+
         for item_data in items_data:
             warehouse_id = item_data.pop('warehouse', None)
             if warehouse_id:
@@ -171,9 +177,19 @@ class SaleSerializer(serializers.ModelSerializer):
         instance = super().update(instance, validated_data)
 
         desired_paid = (instance.status == Sale.Status.COMPLETED)
+        update_fields = []
         if instance.is_paid != desired_paid:
             instance.is_paid = desired_paid
-            instance.save(update_fields=['is_paid'])
+            update_fields.append('is_paid')
+
+        # Установка completed_at при переходе в completed
+        if instance.status == Sale.Status.COMPLETED and not instance.completed_at:
+            from django.utils import timezone
+            instance.completed_at = timezone.now()
+            update_fields.append('completed_at')
+
+        if update_fields:
+            instance.save(update_fields=update_fields)
         if items_data is not None:
             instance.items.all().delete()
             for item_data in items_data:
@@ -304,11 +320,16 @@ class OrderSerializer(serializers.ModelSerializer):
 
 class OrderListSerializer(serializers.ModelSerializer):
     customer_name = serializers.SerializerMethodField()
+    trading_point_name = serializers.CharField(
+        source='trading_point.name', read_only=True, default=''
+    )
+    recipient_name = serializers.CharField(read_only=True)
 
     class Meta:
         model = Order
         fields = ['id', 'number', 'status', 'source', 'total',
-                  'delivery_date', 'customer_name', 'created_at']
+                  'delivery_date', 'customer_name', 'trading_point',
+                  'trading_point_name', 'recipient_name', 'created_at']
 
     def get_customer_name(self, obj):
         return str(obj.customer) if obj.customer else ''

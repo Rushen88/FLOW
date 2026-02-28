@@ -29,11 +29,16 @@ class TransactionSerializer(serializers.ModelSerializer):
 
 class DebtSerializer(serializers.ModelSerializer):
     remaining = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True, default='')
+    customer_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Debt
         fields = '__all__'
         read_only_fields = ['organization']
+
+    def get_customer_name(self, obj):
+        return str(obj.customer) if obj.customer else ''
 
 from .models import CashShift
 
@@ -46,7 +51,9 @@ class CashShiftSerializer(serializers.ModelSerializer):
     class Meta:
         model = CashShift
         fields = '__all__'
-        read_only_fields = ['organization', 'opened_by', 'closed_by', 'opened_at', 'closed_at', 'actual_balance_at_close', 'discrepancy', 'status']
+        read_only_fields = ['organization', 'opened_by', 'closed_by', 'opened_at', 'closed_at',
+                            'balance_at_open', 'expected_balance_at_close',
+                            'actual_balance_at_close', 'discrepancy', 'status']
 
 class CashShiftCloseSerializer(serializers.Serializer):
     actual_balance_at_close = serializers.DecimalField(max_digits=14, decimal_places=2, required=True)

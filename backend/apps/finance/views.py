@@ -1,13 +1,14 @@
 from decimal import Decimal
 
-from rest_framework import viewsets, filters, permissions
+from rest_framework import viewsets, filters, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from django.db import transaction as db_transaction
 from django.db.models import Sum
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Wallet, TransactionCategory, Transaction, Debt
+from .models import Wallet, TransactionCategory, Transaction, Debt, CashShift
 from .services import (
     apply_wallet_balance,
     validate_wallet_ownership,
@@ -16,6 +17,7 @@ from .services import (
 from .serializers import (
     WalletSerializer, TransactionCategorySerializer,
     TransactionSerializer, DebtSerializer,
+    CashShiftSerializer, CashShiftCloseSerializer,
 )
 from apps.core.mixins import (
     OrgPerformCreateMixin, _tenant_filter, _resolve_org,
@@ -129,16 +131,9 @@ class DebtViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     filterset_fields = ['debt_type', 'direction', 'is_closed']
 
     def get_queryset(self):
-        qs = Debt.objects.select_related('organization')
+        qs = Debt.objects.select_related('organization', 'supplier', 'customer')
         return _tenant_filter(qs, self.request.user)
 
-from .models import CashShift
-from .serializers import CashShiftSerializer, CashShiftCloseSerializer
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework import status
-from django.utils import timezone
-from django.db.models import Sum
 
 class CashShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = CashShiftSerializer
@@ -154,13 +149,17 @@ class CashShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         wallet = serializer.validated_data['wallet']
         # Проверяем, есть ли открытая смена у этой кассы
         if CashShift.objects.filter(wallet=wallet, status=CashShift.Status.OPEN).exists():
-            raise serializers.ValidationError({'wallet': 'Для этой кассы уже есть открытая смена.'})
-        
+            raise ValidationError({'wallet': 'Для этой кассы уже есть открытая смена.'})
+
+        org = _resolve_org(self.request.user)
+        if not org:
+            raise ValidationError({'organization': 'Сначала выберите организацию.'})
+
         serializer.save(
-            organization=self.request.user.organization,
+            organization=org,
             opened_by=self.request.user,
             balance_at_open=wallet.balance,
-            status=CashShift.Status.OPEN
+            status=CashShift.Status.OPEN,
         )
 
     @action(detail=True, methods=['post'])
