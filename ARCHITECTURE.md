@@ -127,7 +127,7 @@ FLOW/
 |--------|----------|---------------|
 | **Batch** | Партия товара | nomenclature → Nomenclature, supplier → Supplier, warehouse → Warehouse, purchase_price, quantity, remaining, expiry_date |
 | **StockBalance** | Остатки (денормализовано) | warehouse → Warehouse, nomenclature → Nomenclature, quantity, avg_purchase_price (unique_together) |
-| **StockMovement** | Движение товара | batch → Batch, type (receipt/write_off/transfer/sale/return/adjustment/assembly), quantity, write_off_reason |
+| **StockMovement** | Движение товара | batch → Batch, sale → Sale, type (receipt/write_off/transfer/sale/return/adjustment/assembly), quantity, write_off_reason |
 | **InventoryDocument** | Документ инвентаризации | warehouse → Warehouse, status (draft/in_progress/completed) |
 | **InventoryItem** | Позиция инвентаризации | document → InventoryDocument, expected_quantity, actual_quantity, difference |
 | **Reserve** | Резерв товара | batch → Batch, order → Order, quantity, reserved_until |
@@ -214,7 +214,7 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
 |--------|----------|---------------|
 | **AdChannel** | Рекламный канал | name, channel_type, is_active |
 | **AdInvestment** | Инвестиция в рекламу | channel → AdChannel, amount, date, conversions, revenue |
-| **Discount** | Скидка | name, discount_type (percent/fixed), value, apply_to (all/group/nomenclature), start_date, end_date |
+| **Discount** | Скидка | name, discount_type (percent/fixed), value, apply_to (all/group/nomenclature), target_group → NomenclatureGroup, target_nomenclature → Nomenclature, start_date, end_date |
 | **PromoCode** | Промокод | code, discount → Discount, max_uses, used_count, is_active |
 | **LoyaltyProgram** | Программа лояльности | program_type (bonus/discount/cashback), accrual_percent, max_payment_percent |
 
@@ -369,7 +369,8 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
 Поддержка вложенных моделей через `org_field`: для SaleItem → `org_field='sale__organization'`, для OrderItem → `org_field='order__organization'` и т.д.
 
 #### Авто-назначение организации и торговой точки: `OrgPerformCreateMixin`
-- Автоматически устанавливает `organization` из `request.user.organization` при создании (POST) и обновлении (PATCH/PUT)
+- Автоматически устанавливает `organization` из `request.user.organization` при создании (POST)
+- При обновлении (PATCH/PUT) **не переопределяет** `organization` — сохраняет оригинальное значение и валидирует, что запись принадлежит текущей организации (cross-tenant protection)
 - Автоматически устанавливает `trading_point` из `_resolve_tp(request.user)` если модель имеет такое поле
 - Внутренний хелпер `_resolve_org(request)` — для суперпользователя берёт org из тела запроса (если передана), иначе из user
 - Применён ко всем ViewSet-ам, чья модель имеет поле `organization` (26+ ViewSet-ов)
@@ -569,6 +570,30 @@ npm run dev                       # → http://localhost:3000
 - ✅ correct_bouquet: FIFO-списание вместо прямого StockMovement
 - ✅ Sale number: Cast to Integer + Max (исправлен баг строковой сортировки)
 
+### Аудит (2026-02-28) — Критические исправления
+- ✅ StockMovement.sale FK — прямая связь движений со сделкой (вместо notes__contains partial match)
+- ✅ Идемпотентный FIFO-write-off (do_sale_fifo_write_off проверяет наличие движений перед повторным применением)
+- ✅ Откат продажи по FK sale= вместо notes__contains (исключена порча данных при совпадении номеров #1 / #10 / #11)
+- ✅ SaleSerializer.update() вызывает rollback FIFO перед заменой позиций completed-продажи
+- ✅ disassemble_bouquet списание через FIFO + _update_stock_balance (вместо orphan StockMovement)
+- ✅ _update_stock_balance через DB aggregate (Sum/F) вместо Python-цикла O(N)
+- ✅ OrgPerformCreateMixin.perform_update() больше не переносит записи между организациями
+- ✅ Cross-tenant валидация при обновлении записей (instance.organization_id == current org)
+- ✅ Composite indexes: idx_batch_fifo, idx_movement_org_type_sale, idx_movement_org_nom_date
+- ✅ NomenclatureGroup.parent: CASCADE → SET_NULL (предотвращение каскадного удаления дерева)
+- ✅ Discount: target_group и target_nomenclature FK (для apply_to=group/nomenclature)
+- ✅ InventoryItem.save() автоматически вычисляет difference = actual_quantity - expected_quantity
+- ✅ config/settings.py: DEBUG=False по умолчанию, HSTS, secure cookies, CSRF secure в production
+- ✅ config/urls.py: /api/health/ endpoint (проверка БД + JSON статус)
+- ✅ core/serializers.py: validate_password через Django validators (UserCreateSerializer)
+- ✅ staff/views.py: permission_classes на EmployeeViewSet, PositionViewSet, PayrollSchemeViewSet
+- ✅ staff/serializers.py: validate_role — запрет self-escalation до owner
+- ✅ sales/views.py: ReadOnlyOrManager на OrderViewSet, SaleItemViewSet, OrderItemViewSet
+- ✅ api.ts (frontend): JWT refresh queue (isRefreshing + failedQueue — устранена гонка параллельных 401)
+- ✅ InventoryPage.tsx: корректный парсинг float-количества (Number() вместо parseInt())
+- ✅ FinancePage.tsx: устранена двойная загрузка категорий
+- ✅ Admin: зарегистрированы TenantContact, TenantPayment, TenantNote, CashShift, OrderStatusHistory
+
 ### Рекомендации по развитию
 - ✅ ~~Расширить RBAC на все ViewSet-ы~~ — **Исправлено**: ReadOnlyOrManager на sales, finance (transactions, debts), IsOwnerOrAdmin на wallets
 - ✅ ~~Бизнес-логика Transaction → автоматическое обновление Wallet.balance~~ — **Исправлено**: TransactionViewSet.perform_create/update/destroy обновляет balance через F() + select_for_update
@@ -585,8 +610,8 @@ npm run dev                       # → http://localhost:3000
 - 🔲 N+1 query оптимизация (select_related/prefetch_related во всех ViewSet-ах)
 - 🔲 Code-splitting (dynamic import) для уменьшения размера бандла (~1.2MB)
 - 🔲 Вынести SECRET_KEY, DB-пароль и другие secrets в переменные окружения (django-environ)
-- 🔲 DEBUG=False + настроить ALLOWED_HOSTS + CORS для продакшена
-- 🔲 Автонумерация заказов/продаж (4-значная нумерация)
+- ✅ ~~DEBUG=False + настроить ALLOWED_HOSTS + CORS для продакшена~~ — **Исправлено**: DEBUG=False default, HSTS, secure cookies в production
+- ✅ ~~Автонумерация заказов/продаж (4-значная нумерация)~~ — **Исправлено**: Max + select_for_update
 - 🔲 Коды резерва (6-значные)
 - 🔲 Программа лояльности: уровни Bronze/Silver/Gold
 - 🔲 Прогрессивные шкалы оплаты труда
@@ -598,6 +623,92 @@ npm run dev                       # → http://localhost:3000
 - 🔲 Мобильное приложение (React Native / PWA)
 - 🔲 Redis для кеширования и Celery для фоновых задач
 - 🔲 Автоматические отчёты и email-рассылки
+---
+
+## Changelog (2026-02-28) — Глубокий аудит: критические исправления данных, безопасность, производительность
+
+### Критические исправления целостности данных
+
+**sales/services.py — Откат продажи по FK вместо partial match**
+- ✅ `rollback_sale_effects_before_delete()` переведён на `StockMovement.objects.filter(sale=sale)` вместо `notes__contains=f'#{sale_number}'`
+- **Причина**: `notes__contains='#1'` захватывал движения от продаж #10, #11, #100 и т.д. — разрушая данные складского учёта
+- ✅ `do_sale_fifo_write_off()` стал идемпотентным: проверяет `StockMovement.objects.filter(sale=sale, movement_type='sale').exists()` перед повторным применением
+- ✅ Все `StockMovement.objects.create()` в FIFO-движке теперь передают `sale=sale` FK
+
+**inventory/services.py — Orphan movements + DB aggregate**
+- ✅ `disassemble_bouquet()` — секция списания компонентов теперь использует FIFO (`fifo_write_off`) + `_update_stock_balance()` вместо одиночного `StockMovement.create()` без обновления баланса
+- ✅ `_update_stock_balance()` переведён на DB aggregate: `Batch.objects.filter(...).aggregate(total_remaining=Sum('remaining'), total_cost=Sum(F('remaining') * F('purchase_price')))` вместо Python-цикла O(N) по всем партиям
+- ✅ `process_sale_items()` — StockMovement теперь включает `sale=sale` FK
+
+**sales/serializers.py — Double FIFO prevention**
+- ✅ `SaleSerializer.update()` теперь вызывает `rollback_sale_effects_before_delete(sale)` перед заменой позиций completed-продажи — предотвращает двойное FIFO-списание
+
+**inventory/models.py — Новые поля и индексы**
+- ✅ `StockMovement.sale` — FK к `sales.Sale` (SET_NULL, nullable) — прямая связь движения с продажей
+- ✅ `idx_batch_fifo` — составной индекс: (organization, warehouse, nomenclature, remaining)
+- ✅ `idx_movement_org_type_sale` — составной индекс: (organization, movement_type, sale)
+- ✅ `idx_movement_org_nom_date` — составной индекс: (organization, nomenclature, created_at)
+- ✅ `InventoryItem.save()` — автоматически вычисляет `difference = actual_quantity - expected_quantity`
+
+### Безопасность
+
+**core/mixins.py — Cross-tenant protection**
+- ✅ `perform_update()` больше НЕ переопределяет `organization` через `serializer.save(organization=org)` — это позволяло переносить записи между организациями
+- ✅ Новая валидация: `instance.organization_id == org.id` после сохранения — 403 при попытке cross-tenant editing
+
+**config/settings.py — Production hardening**
+- ✅ `DEBUG = os.getenv('DJANGO_DEBUG', 'False') == 'True'` (было `True` по умолчанию)
+- ✅ Production-only: `SECURE_HSTS_SECONDS=31536000`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, `SECURE_BROWSER_XSS_FILTER`
+- ✅ `ALLOWED_HOSTS` default: `['localhost', '127.0.0.1']` вместо `['*']`
+
+**core/serializers.py — Password validation**
+- ✅ `UserCreateSerializer.validate_password()` подключает Django password validators (MinLength, Common, Numeric)
+
+**staff — Permission hardening**
+- ✅ `EmployeeViewSet`: `permission_classes=[IsOwnerOrAdmin]`
+- ✅ `PositionViewSet`: `permission_classes=[IsManager]`
+- ✅ `PayrollSchemeViewSet`: extends `OrgPerformCreateMixin`, `permission_classes=[IsManager]`
+- ✅ `EmployeeSerializer.validate_role()` — запрет назначения role='owner' для non-owner пользователей
+
+**sales/views.py — Permission hardening**
+- ✅ `OrderViewSet`, `SaleItemViewSet`, `OrderItemViewSet`: `permission_classes=[ReadOnlyOrManager]`
+
+### Модели данных
+
+**nomenclature/models.py**
+- ✅ `NomenclatureGroup.parent`: `on_delete=CASCADE` → `on_delete=SET_NULL` — удаление родительской группы больше не каскадно удаляет всё дерево
+
+**marketing/models.py & serializers.py**
+- ✅ Discount: добавлены `target_group` (FK → NomenclatureGroup) и `target_nomenclature` (FK → Nomenclature) — для apply_to=group/nomenclature
+- ✅ DiscountSerializer: валидация что target FK заполнен при соответствующем apply_to
+- ✅ PromoCodeSerializer: `used_count` → read_only; `discount_name` → read_only
+
+### Django Admin
+
+- ✅ Зарегистрированы: `TenantContact`, `TenantPayment`, `TenantNote` (core), `CashShift` (finance), `OrderStatusHistory` (sales)
+- ✅ Добавлены `list_filter = ('organization',)` и `readonly_fields` для balance-полей CashShift
+- ✅ Inventory admin: добавлены organization filters
+- ✅ Staff admin: добавлен organization filter к Position
+
+### Frontend
+
+**api.ts — JWT refresh race condition fix**
+- ✅ Добавлен механизм очереди: `isRefreshing` flag + `failedQueue` — при параллельных 401 только первый запрос обновляет токен, остальные ждут в очереди
+
+**InventoryPage.tsx**
+- ✅ `parseInt(asmForm.quantity)` → `Math.max(1, Math.round(Number(asmForm.quantity) || 1))` — корректный парсинг дробных количеств
+
+**FinancePage.tsx**
+- ✅ Устранена двойная загрузка категорий (дублирующийся useEffect)
+
+### Health endpoint
+- ✅ `GET /api/health/` — проверяет подключение к БД, возвращает JSON `{status: 'ok', database: 'ok'}` или `{status: 'error'}`
+
+### Миграции (применены на production)
+- `nomenclature.0006_alter_nomenclaturegroup_parent`
+- `inventory.0004_stockmovement_sale_batch_idx_batch_fifo_and_more`
+- `marketing.0003_discount_target_group_discount_target_nomenclature`
+
 ---
 
 ## Changelog (2026-03-06) — Реальный отрицательный остаток, удаление продажи с откатом
