@@ -299,7 +299,20 @@ def rollback_sale_effects_before_delete(sale):
     tx_qs.delete()
 
     if sale.status == Sale.Status.COMPLETED and sale.is_paid and sale.customer_id:
-        update_customer_stats(sale, -sale.total, -1)
+        from django.db.models import F, Value, DecimalField, IntegerField
+        from django.db.models.functions import Greatest
+        from apps.customers.models import Customer
+
+        Customer.objects.select_for_update().filter(pk=sale.customer_id).update(
+            total_purchases=Greatest(
+                F('total_purchases') - sale.total,
+                Value(Decimal('0.00'), output_field=DecimalField(max_digits=14, decimal_places=2)),
+            ),
+            purchases_count=Greatest(
+                F('purchases_count') - 1,
+                Value(0, output_field=IntegerField()),
+            ),
+        )
 
 
 def validate_order_status_transition(order, new_status):
