@@ -1,5 +1,6 @@
 from decimal import Decimal
 from django.db import transaction as db_transaction
+from django.db.models import Q
 
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
@@ -117,6 +118,10 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         return (
             qs
             .exclude(nomenclature__nomenclature_type='service')
+            .exclude(
+                Q(quantity=0)
+                & Q(nomenclature__nomenclature_type__in=['bouquet', 'composition'])
+            )
             .order_by('nomenclature__name')
         )
 
