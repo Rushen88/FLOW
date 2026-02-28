@@ -33,8 +33,8 @@ try:
     # Check if repo exists, if so pull, else clone
     out, err, status = run_command(ssh, 'ls /root/FLOW/.git')
     if status == 0:
-        print("Repo exists, pulling latest changes...")
-        run_command(ssh, 'cd /root/FLOW && git pull origin main')
+        print("Repo exists, resetting to latest origin/main...")
+        run_command(ssh, 'cd /root/FLOW && git fetch origin && git reset --hard origin/main && git clean -fd')
     else:
         print("Cloning repo...")
         run_command(ssh, 'git clone https://github.com/Rushen88/FLOW.git /root/FLOW')
