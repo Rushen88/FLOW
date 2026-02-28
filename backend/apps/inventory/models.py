@@ -39,7 +39,7 @@ class Batch(models.Model):
         ordering = ['-arrival_date']
         constraints = [
             models.CheckConstraint(
-                check=models.Q(remaining__gte=0),
+                condition=models.Q(remaining__gte=0),
                 name='batch_remaining_non_negative'
             ),
         ]
