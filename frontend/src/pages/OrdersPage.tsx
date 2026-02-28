@@ -40,6 +40,8 @@ interface StatusEntry { id: string; status: string; created_at: string; comment?
 interface Ref { id: string; name: string }
 interface NomRef { id: string; name: string; retail_price: string }
 interface CustomerRef { id: string; full_name?: string; first_name?: string; last_name?: string }
+interface UserRef { id: string; full_name: string; username: string }
+interface CourierRef { id: string; name: string }
 
 // ─── Constants ───
 const STATUS_CHOICES: { value: string; label: string; color: 'info' | 'primary' | 'warning' | 'secondary' | 'success' | 'error' | 'default' }[] = [
@@ -79,19 +81,25 @@ export default function OrdersPage() {
   const [paymentMethods, setPaymentMethods] = useState<Ref[]>([])
   const [customers, setCustomers] = useState<CustomerRef[]>([])
   const [nomenclatures, setNomenclatures] = useState<NomRef[]>([])
+  const [users, setUsers] = useState<UserRef[]>([])
+  const [couriers, setCouriers] = useState<CourierRef[]>([])
 
   const fetchHelpers = useCallback(async () => {
     try {
-      const [tpRes, pmRes, custRes, nomRes] = await Promise.all([
+      const [tpRes, pmRes, custRes, nomRes, usersRes, courRes] = await Promise.all([
         api.get('/core/trading-points/'),
         api.get('/core/payment-methods/'),
         api.get('/customers/customers/'),
         api.get('/nomenclature/items/'),
+        api.get('/core/users/'),
+        api.get('/delivery/couriers/'),
       ])
       setTradingPoints(tpRes.data.results || tpRes.data || [])
       setPaymentMethods(pmRes.data.results || pmRes.data || [])
       setCustomers(custRes.data.results || custRes.data || [])
       setNomenclatures(nomRes.data.results || nomRes.data || [])
+      setUsers(usersRes.data.results || usersRes.data || [])
+      setCouriers(courRes.data.results || courRes.data || [])
     } catch (err) { notify(extractError(err, 'Ошибка загрузки справочников'), 'error') }
   }, [notify, user?.active_trading_point])
 
@@ -136,6 +144,7 @@ export default function OrdersPage() {
     is_anonymous: false, card_text: '',
     payment_method: '', prepayment: '0', delivery_cost: '0',
     notes: '', internal_notes: '',
+    responsible: '', florist: '', courier: '',
   })
   const [orderItems, setOrderItems] = useState<{ nomenclature: string; quantity: string; price: string; discount_percent: string }[]>([emptyItemRow()])
   const [saving, setSaving] = useState(false)
@@ -148,6 +157,7 @@ export default function OrdersPage() {
       is_anonymous: false, card_text: '',
       payment_method: '', prepayment: '0', delivery_cost: '0',
       notes: '', internal_notes: '',
+      responsible: '', florist: '', courier: '',
     })
     setOrderItems([emptyItemRow()])
     setCreateDlg(true)
@@ -202,6 +212,9 @@ export default function OrdersPage() {
         delivery_cost: orderForm.delivery_cost || '0',
         notes: orderForm.notes,
         internal_notes: orderForm.internal_notes,
+        responsible: orderForm.responsible || null,
+        florist: orderForm.florist || null,
+        courier: orderForm.courier || null,
         items: validItems.map(it => ({
           nomenclature: it.nomenclature,
           quantity: it.quantity,
@@ -495,7 +508,36 @@ export default function OrdersPage() {
             />
           </Grid>
 
-          {/* Row 7 */}
+          {/* Row 7 — staff assignment */}
+          <Grid size={4}>
+            <TextField
+              select fullWidth label="Ответственный" value={orderForm.responsible}
+              onChange={e => setOrderForm(f => ({ ...f, responsible: e.target.value }))}
+            >
+              <MenuItem value="">— Не указан —</MenuItem>
+              {users.map(u => <MenuItem key={u.id} value={u.id}>{u.full_name || u.username}</MenuItem>)}
+            </TextField>
+          </Grid>
+          <Grid size={4}>
+            <TextField
+              select fullWidth label="Флорист" value={orderForm.florist}
+              onChange={e => setOrderForm(f => ({ ...f, florist: e.target.value }))}
+            >
+              <MenuItem value="">— Не указан —</MenuItem>
+              {users.map(u => <MenuItem key={u.id} value={u.id}>{u.full_name || u.username}</MenuItem>)}
+            </TextField>
+          </Grid>
+          <Grid size={4}>
+            <TextField
+              select fullWidth label="Курьер" value={orderForm.courier}
+              onChange={e => setOrderForm(f => ({ ...f, courier: e.target.value }))}
+            >
+              <MenuItem value="">— Не указан —</MenuItem>
+              {couriers.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+            </TextField>
+          </Grid>
+
+          {/* Row 8 — notes */}
           <Grid size={6}>
             <TextField
               fullWidth label="Примечания" multiline minRows={1} value={orderForm.notes}
@@ -689,6 +731,19 @@ export default function OrdersPage() {
               <Grid size={3}>
                 <Typography variant="caption" color="text.secondary">Создан</Typography>
                 <Typography>{fmtDateTime(detailOrder.created_at)}</Typography>
+              </Grid>
+
+              <Grid size={4}>
+                <Typography variant="caption" color="text.secondary">Ответственный</Typography>
+                <Typography>{users.find(u => u.id === detailOrder.responsible)?.full_name || '—'}</Typography>
+              </Grid>
+              <Grid size={4}>
+                <Typography variant="caption" color="text.secondary">Флорист</Typography>
+                <Typography>{users.find(u => u.id === detailOrder.florist)?.full_name || '—'}</Typography>
+              </Grid>
+              <Grid size={4}>
+                <Typography variant="caption" color="text.secondary">Курьер</Typography>
+                <Typography>{couriers.find(c => c.id === detailOrder.courier)?.name || '—'}</Typography>
               </Grid>
 
               {(detailOrder.notes || detailOrder.internal_notes) && (

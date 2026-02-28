@@ -81,12 +81,24 @@ def _update_stock_balance(organization, warehouse, nomenclature, qty_delta: Deci
     """Обновить (или создать) StockBalance по складу + номенклатуре."""
     from django.db.models import Sum, F
 
-    sb, created = StockBalance.objects.get_or_create(
-        organization=organization,
-        warehouse=warehouse,
-        nomenclature=nomenclature,
-        defaults={'quantity': Decimal('0'), 'avg_purchase_price': Decimal('0')},
-    )
+    # select_for_update предотвращает race condition при параллельных запросах
+    try:
+        sb = (
+            StockBalance.objects.select_for_update()
+            .get(
+                organization=organization,
+                warehouse=warehouse,
+                nomenclature=nomenclature,
+            )
+        )
+    except StockBalance.DoesNotExist:
+        sb = StockBalance.objects.create(
+            organization=organization,
+            warehouse=warehouse,
+            nomenclature=nomenclature,
+            quantity=Decimal('0'),
+            avg_purchase_price=Decimal('0'),
+        )
     sb.quantity += qty_delta
 
     # Пересчитываем среднюю закупочную через DB aggregate (вместо Python-loop)
@@ -160,7 +172,7 @@ def process_batch_receipt(
     organization, warehouse, nomenclature, supplier,
     quantity: Decimal, purchase_price: Decimal,
     arrival_date=None, expiry_date=None, invoice_number='',
-    notes='', user=None,
+    notes='', user=None, create_debt=True,
 ):
     """
     Оприходование партии товара.
@@ -200,8 +212,20 @@ def process_batch_receipt(
 
     _update_stock_balance(organization, warehouse, nomenclature, quantity)
 
-    # Обновляем цену в справочнике номенклатуры
-    nomenclature.purchase_price = purchase_price
+    # Обновляем цену в справочнике номенклатуры (средневзвешенная по всем остаткам)
+    from django.db.models import Sum, F as DbF
+    agg = Batch.objects.filter(
+        nomenclature=nomenclature,
+        remaining__gt=0,
+    ).aggregate(
+        total_remaining=Sum('remaining'),
+        total_cost=Sum(DbF('remaining') * DbF('purchase_price')),
+    )
+    total_rem = agg['total_remaining'] or Decimal('0')
+    if total_rem > 0:
+        nomenclature.purchase_price = (agg['total_cost'] or Decimal('0')) / total_rem
+    else:
+        nomenclature.purchase_price = purchase_price
     nomenclature.save(update_fields=['purchase_price'])
 
     # Обновляем цену у поставщика (если указан)
@@ -218,18 +242,19 @@ def process_batch_receipt(
 
         # Enterprise Architecture: Автоматическое создание обязательства (Debt) перед поставщиком
         # Приходуя товар, бизнес становится должен поставщику, пока не будет проведена транзакция оплаты.
-        from apps.finance.models import Debt
-        total_batch_cost = quantity * purchase_price
-        if total_batch_cost > 0:
-            Debt.objects.create(
-                organization=organization,
-                debt_type=Debt.DebtType.SUPPLIER,
-                direction=Debt.Direction.WE_OWE,
-                counterparty_name=supplier.name,
-                supplier=supplier,
-                amount=total_batch_cost,
-                notes=f'За поставку партии {nomenclature.name} ({quantity} шт). Накладная: {invoice_number}'
-            )
+        if create_debt:
+            from apps.finance.models import Debt
+            total_batch_cost = quantity * purchase_price
+            if total_batch_cost > 0:
+                Debt.objects.create(
+                    organization=organization,
+                    debt_type=Debt.DebtType.SUPPLIER,
+                    direction=Debt.Direction.WE_OWE,
+                    counterparty_name=supplier.name,
+                    supplier=supplier,
+                    amount=total_batch_cost,
+                    notes=f'За поставку партии {nomenclature.name} ({quantity} шт). Накладная: {invoice_number}'
+                )
 
     return batch
 

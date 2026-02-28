@@ -6,7 +6,7 @@ from .serializers import (
     CustomerGroupSerializer, CustomerSerializer, CustomerListSerializer,
     ImportantDateSerializer, CustomerAddressSerializer,
 )
-from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, _resolve_org
+from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, _resolve_org, ReadOnlyOrManager
 
 
 class CustomerGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
@@ -39,6 +39,7 @@ class CustomerViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 class ImportantDateViewSet(viewsets.ModelViewSet):
     serializer_class = ImportantDateSerializer
     queryset = ImportantDate.objects.all()
+    permission_classes = [ReadOnlyOrManager]
 
     def get_queryset(self):
         qs = ImportantDate.objects.all()
@@ -60,6 +61,7 @@ class ImportantDateViewSet(viewsets.ModelViewSet):
 class CustomerAddressViewSet(viewsets.ModelViewSet):
     serializer_class = CustomerAddressSerializer
     queryset = CustomerAddress.objects.all()
+    permission_classes = [ReadOnlyOrManager]
 
     def get_queryset(self):
         qs = CustomerAddress.objects.all()

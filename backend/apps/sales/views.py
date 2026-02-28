@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -108,6 +110,8 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             status=CashShift.Status.OPEN,
         ).order_by('-opened_at').first()
 
+        remaining = max(order.total - (order.prepayment or 0), Decimal('0'))
+
         sale = Sale.objects.create(
             number=generate_sale_number(order.organization),
             organization=order.organization,
@@ -118,9 +122,11 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             order=order,
             subtotal=order.subtotal,
             discount_amount=order.discount_amount,
-            total=order.total - order.prepayment,
+            total=remaining,
             payment_method=order.payment_method,
             cash_shift=active_shift,
+            promo_code=order.promo_code,
+            used_bonuses=order.used_bonuses or 0,
             is_paid=True,
             completed_at=timezone.now(),
         )
@@ -144,10 +150,11 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         # Безопасный переход статуса через transition_to (с аудит-логом)
         try:
             order.transition_to('completed', user=request.user, comment='Checkout — чек создан')
-        except ValueError:
-            # Если прямой переход невозможен — ставим напрямую (заказ мог быть в любом промежуточном статусе)
-            order.status = Order.Status.COMPLETED
-            order.save(update_fields=['status', 'updated_at'])
+        except ValueError as exc:
+            return Response(
+                {'detail': f'Невозможно завершить заказ: {exc}'},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         return Response({'detail': 'Продажа успешно создана', 'sale_id': str(sale.id)}, status=status.HTTP_201_CREATED)
 

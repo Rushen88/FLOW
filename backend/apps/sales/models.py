@@ -47,6 +47,12 @@ class Sale(models.Model):
         'finance.CashShift', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='sales', verbose_name='Кассовая смена',
     )
+    promo_code = models.ForeignKey(
+        'marketing.PromoCode', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sales', verbose_name='Промокод',
+    )
+    used_bonuses = models.DecimalField('Списано бонусов', max_digits=12, decimal_places=2, default=0)
+    earned_bonuses = models.DecimalField('Начислено бонусов', max_digits=12, decimal_places=2, default=0)
     is_paid = models.BooleanField('Оплачено', default=False)
     notes = models.TextField('Примечания', blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -176,6 +182,8 @@ class Order(models.Model):
         'marketing.PromoCode', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='orders', verbose_name='Промокод',
     )
+    used_bonuses = models.DecimalField('Списано бонусов', max_digits=12, decimal_places=2, default=0)
+    earned_bonuses = models.DecimalField('Начислено бонусов', max_digits=12, decimal_places=2, default=0)
     notes = models.TextField('Примечания', blank=True, default='')
     internal_notes = models.TextField('Внутренние заметки', blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)

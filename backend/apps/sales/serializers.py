@@ -88,6 +88,53 @@ class SaleSerializer(serializers.ModelSerializer):
     def get_seller_name(self, obj):
         return obj.seller.get_full_name() if obj.seller else ''
 
+    def validate(self, attrs):
+        """H3/H4: Валидация бонусов и промокода."""
+        from apps.customers.models import Customer
+        from apps.marketing.models import PromoCode, LoyaltyProgram
+        from django.utils import timezone as tz
+        from decimal import Decimal
+
+        used_bonuses = attrs.get('used_bonuses') or Decimal('0')
+        customer = attrs.get('customer') or (self.instance.customer if self.instance else None)
+        promo = attrs.get('promo_code') or (self.instance.promo_code if self.instance else None)
+        organization = attrs.get('organization') or (self.instance.organization if self.instance else None)
+
+        # H3: проверка что бонусов хватает
+        if used_bonuses > 0:
+            if not customer:
+                raise serializers.ValidationError({'used_bonuses': 'Укажите клиента для списания бонусов.'})
+            if used_bonuses > customer.bonus_points:
+                raise serializers.ValidationError({
+                    'used_bonuses': f'У клиента только {customer.bonus_points} бонусов, запрошено {used_bonuses}.'
+                })
+            # Проверка max_payment_percent
+            if organization:
+                loyalty = LoyaltyProgram.objects.filter(
+                    organization=organization, is_active=True
+                ).first()
+                if loyalty:
+                    subtotal = attrs.get('subtotal') or (self.instance.subtotal if self.instance else Decimal('0'))
+                    max_bonus = subtotal * loyalty.max_payment_percent / Decimal('100')
+                    if used_bonuses > max_bonus:
+                        raise serializers.ValidationError({
+                            'used_bonuses': f'Максимально можно списать {max_bonus} бонусов ({loyalty.max_payment_percent}% от суммы).'
+                        })
+
+        # H4: проверка промокода
+        if promo:
+            if not promo.is_active:
+                raise serializers.ValidationError({'promo_code': 'Промокод не активен.'})
+            if promo.max_uses > 0 and promo.used_count >= promo.max_uses:
+                raise serializers.ValidationError({'promo_code': 'Промокод исчерпал лимит использований.'})
+            now = tz.now()
+            if promo.start_date and now < promo.start_date:
+                raise serializers.ValidationError({'promo_code': 'Промокод ещё не активен.'})
+            if promo.end_date and now > promo.end_date:
+                raise serializers.ValidationError({'promo_code': 'Промокод истёк.'})
+
+        return attrs
+
     @db_transaction.atomic
     def create(self, validated_data):
         items_data = validated_data.pop('items_data', [])

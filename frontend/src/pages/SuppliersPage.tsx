@@ -6,7 +6,7 @@ import {
 import Grid from '@mui/material/Grid2'
 import {
   Add, Edit, Delete, LocalShipping, ShoppingCart,
-  Inventory2, ReportProblem, Star,
+  Inventory2, ReportProblem, Star, Archive,
 } from '@mui/icons-material'
 import api from '../api'
 import { useNotification } from '../contexts/NotificationContext'
@@ -38,6 +38,7 @@ interface Claim {
   photos: any; created_at: string; resolved_at: string | null; supplier_name: string
 }
 interface NomItem { id: string; name: string }
+interface WarehouseRef { id: string; name: string }
 
 const ORDER_STATUSES = [
   { value: 'draft', label: 'Черновик', color: 'default' as const },
@@ -79,9 +80,11 @@ export default function SuppliersPage() {
   const [tab, setTab] = useState(0)
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [nomItems, setNomItems] = useState<NomItem[]>([])
+  const [warehouses, setWarehouses] = useState<WarehouseRef[]>([])
 
   useEffect(() => {
     api.get('/nomenclature/items/').then(r => setNomItems(r.data.results || r.data || []))
+    api.get('/core/warehouses/').then(r => setWarehouses(r.data.results || r.data || []))
   }, [])
 
   // ══════════════════ Tab 0: Suppliers ══════════════════
@@ -196,6 +199,32 @@ export default function SuppliersPage() {
     if (!delOrd) return
     try { await api.delete(`/suppliers/orders/${delOrd.id}/`); notify('Заказ удалён'); setDelOrd(null); fetchOrders() }
     catch (err) { notify(extractError(err, 'Ошибка удаления'), 'error') }
+  }
+
+  // ── Receive shipment ──
+  const [receiveDlg, setReceiveDlg] = useState(false)
+  const [receiveOrd, setReceiveOrd] = useState<SupplierOrder | null>(null)
+  const [receiveWh, setReceiveWh] = useState('')
+  const [receiveDebt, setReceiveDebt] = useState(true)
+  const [receiving, setReceiving] = useState(false)
+
+  const openReceiveDlg = (ord: SupplierOrder) => {
+    setReceiveOrd(ord)
+    setReceiveWh(warehouses.length === 1 ? warehouses[0].id : '')
+    setReceiveDebt(true)
+    setReceiveDlg(true)
+  }
+
+  const receiveOrder = async () => {
+    if (!receiveOrd || !receiveWh) { notify('Выберите склад', 'warning'); return }
+    setReceiving(true)
+    try {
+      await api.post(`/suppliers/orders/${receiveOrd.id}/receive/`, { warehouse: receiveWh, create_debt: receiveDebt })
+      notify('Поставка принята на склад')
+      setReceiveDlg(false)
+      fetchOrders()
+    } catch (err) { notify(extractError(err, 'Ошибка приёмки'), 'error') }
+    setReceiving(false)
   }
 
   // ══════════════════ Tab 2: Supplier Nomenclature ══════════════════
@@ -354,7 +383,10 @@ export default function SuppliersPage() {
               { key: 'total', label: 'Сумма', align: 'right', render: (v: string) => `${Number(v).toLocaleString('ru-RU')} ₽` },
               { key: 'expected_date', label: 'Ожидаемая дата', render: (v: string | null) => v ? new Date(v).toLocaleDateString('ru-RU') : '—' },
               { key: 'created_at', label: 'Создан', render: (v: string) => new Date(v).toLocaleDateString('ru-RU') },
-              { key: '_act', label: '', align: 'center', width: 100, render: (_: any, row: SupplierOrder) => (<>
+              { key: '_act', label: '', align: 'center', width: 140, render: (_: any, row: SupplierOrder) => (<>
+                {['confirmed', 'shipped'].includes(row.status) && (
+                  <IconButton size="small" color="success" title="Принять поставку" onClick={() => openReceiveDlg(row)}><Archive fontSize="small" /></IconButton>
+                )}
                 <IconButton size="small" onClick={() => openOrdDlg(row)}><Edit fontSize="small" /></IconButton>
                 <IconButton size="small" onClick={() => setDelOrd(row)}><Delete fontSize="small" /></IconButton>
               </>) },
@@ -584,6 +616,43 @@ export default function SuppliersPage() {
         onConfirm={removeSn} onCancel={() => setDelSn(null)} />
       <ConfirmDialog open={!!delCl} title="Удалить претензию" message="Удалить эту претензию?"
         onConfirm={removeCl} onCancel={() => setDelCl(null)} />
+
+      {/* ══════ Receive Shipment Dialog ══════ */}
+      <EntityFormDialog
+        open={receiveDlg}
+        title={`Принять поставку №${receiveOrd?.number || ''}`}
+        onClose={() => setReceiveDlg(false)}
+        onSubmit={receiveOrder}
+        loading={receiving}
+        submitText="Принять на склад"
+      >
+        <Grid container spacing={2}>
+          <Grid size={12}>
+            <TextField
+              select fullWidth label="Склад приёмки" value={receiveWh}
+              onChange={e => setReceiveWh(e.target.value)}
+            >
+              {warehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
+            </TextField>
+          </Grid>
+          <Grid size={12}>
+            <FormControlLabel
+              control={<Switch checked={receiveDebt} onChange={e => setReceiveDebt(e.target.checked)} />}
+              label="Создать долг поставщику"
+            />
+          </Grid>
+          {receiveOrd?.items && receiveOrd.items.length > 0 && (
+            <Grid size={12}>
+              <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Позиции:</Typography>
+              {receiveOrd.items.map((it, i) => (
+                <Typography key={i} variant="body2" color="text.secondary">
+                  {it.nomenclature_name || nomItems.find(n => n.id === it.nomenclature)?.name || it.nomenclature} — {it.quantity} шт. × {Number(it.price).toLocaleString('ru-RU')} ₽
+                </Typography>
+              ))}
+            </Grid>
+          )}
+        </Grid>
+      </EntityFormDialog>
     </Box>
   )
 }

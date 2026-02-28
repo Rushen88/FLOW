@@ -138,5 +138,10 @@ class SalaryAccrual(models.Model):
         verbose_name_plural = 'Начисления зарплаты'
         ordering = ['-period_end']
 
+    def save(self, *args, **kwargs):
+        """M4: Автоматический пересчёт total при сохранении."""
+        self.total = (self.base_amount or 0) + (self.bonus or 0) + (self.sales_bonus or 0) - (self.penalty or 0)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f'{self.employee} — {self.period_start} - {self.period_end}'

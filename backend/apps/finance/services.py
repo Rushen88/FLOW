@@ -20,6 +20,22 @@ def validate_transaction_wallet_rules(transaction_type, wallet_from=None, wallet
         if wallet_from.id == wallet_to.id:
             raise ValidationError({'wallet_to': 'Кошелёк отправителя и получателя не могут совпадать.'})
 
+    # Расходные типы требуют wallet_from
+    expense_types = (
+        Transaction.TransactionType.EXPENSE,
+        Transaction.TransactionType.SALARY,
+        Transaction.TransactionType.PERSONAL_EXPENSE,
+        Transaction.TransactionType.SUPPLIER_PAYMENT,
+    )
+    if transaction_type in expense_types:
+        if not wallet_from:
+            raise ValidationError({'wallet_from': 'Для расходной операции укажите кошелёк списания.'})
+
+    # Доходные типы требуют wallet_to
+    if transaction_type == Transaction.TransactionType.INCOME:
+        if not wallet_to:
+            raise ValidationError({'wallet_to': 'Для приходной операции укажите кошелёк зачисления.'})
+
 
 def apply_wallet_balance(txn_or_id, reverse=False):
     """

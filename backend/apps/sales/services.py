@@ -83,20 +83,55 @@ def recalc_sale_totals(sale):
 
 def update_customer_stats(sale, delta_total, delta_count):
     """
-    Обновление статистики клиента (total_purchases, purchases_count).
-    delta_total: сколько добавить/убрать из суммы покупок
-    delta_count: сколько добавить/убрать из количества покупок
+    Обновление статистики клиента (total_purchases, purchases_count, loyalty)
+    и счетчика использований промокода.
     """
-    if not sale.customer:
-        return
-
-    from django.db.models import F
+    from django.db.models import F, DecimalField, IntegerField, Value
+    from django.db.models.functions import Greatest
     from apps.customers.models import Customer
+    from apps.marketing.models import PromoCode, LoyaltyProgram
+    from decimal import Decimal
 
-    Customer.objects.filter(pk=sale.customer_id).update(
-        total_purchases=F('total_purchases') + delta_total,
-        purchases_count=F('purchases_count') + delta_count,
-    )
+    is_completion = delta_count > 0
+
+    if getattr(sale, 'promo_code', None):
+        if is_completion:
+            PromoCode.objects.filter(pk=sale.promo_code_id).update(used_count=F('used_count') + 1)
+        else:
+            PromoCode.objects.filter(pk=sale.promo_code_id).update(
+                used_count=Greatest(F('used_count') - 1, Value(0, output_field=IntegerField()))
+            )
+
+    if getattr(sale, 'customer', None):
+        earned = Decimal('0')
+        if is_completion:
+            loyalty = LoyaltyProgram.objects.filter(organization=sale.organization, is_active=True).first()
+            if loyalty and loyalty.program_type == 'bonus':
+                earned = (sale.total * loyalty.accrual_percent / Decimal('100.0')).quantize(Decimal('0.01'))
+            sale.earned_bonuses = earned
+            sale.save(update_fields=['earned_bonuses'])
+        else:
+            earned = getattr(sale, 'earned_bonuses', Decimal('0')) or Decimal('0')
+            sale.earned_bonuses = Decimal('0')
+            sale.save(update_fields=['earned_bonuses'])
+
+        used = getattr(sale, 'used_bonuses', Decimal('0')) or Decimal('0')
+        delta_bonuses = earned - used if is_completion else used - earned
+
+        Customer.objects.filter(pk=sale.customer_id).update(
+            total_purchases=Greatest(
+                F('total_purchases') + delta_total,
+                Value(Decimal('0.00'), output_field=DecimalField(max_digits=14, decimal_places=2))
+            ),
+            purchases_count=Greatest(
+                F('purchases_count') + delta_count,
+                Value(0, output_field=IntegerField())
+            ),
+            bonus_points=Greatest(
+                F('bonus_points') + delta_bonuses,
+                Value(Decimal('0.00'), output_field=DecimalField(max_digits=10, decimal_places=2))
+            ),
+        )
 
 
 def do_sale_fifo_write_off(sale):

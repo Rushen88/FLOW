@@ -138,6 +138,7 @@ class DebtViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 class CashShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = CashShiftSerializer
     queryset = CashShift.objects.all()
+    permission_classes = [ReadOnlyOrManager]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'trading_point', 'wallet']
     
@@ -145,10 +146,11 @@ class CashShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         qs = CashShift.objects.select_related('opened_by', 'closed_by', 'wallet', 'trading_point')
         return _tenant_filter(qs, self.request.user)
 
+    @db_transaction.atomic
     def perform_create(self, serializer):
         wallet = serializer.validated_data['wallet']
-        # Проверяем, есть ли открытая смена у этой кассы
-        if CashShift.objects.filter(wallet=wallet, status=CashShift.Status.OPEN).exists():
+        # Проверяем, есть ли открытая смена у этой кассы (select_for_update для защиты от TOCTOU)
+        if CashShift.objects.select_for_update().filter(wallet=wallet, status=CashShift.Status.OPEN).exists():
             raise ValidationError({'wallet': 'Для этой кассы уже есть открытая смена.'})
 
         org = _resolve_org(self.request.user)
@@ -163,6 +165,7 @@ class CashShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=['post'])
+    @db_transaction.atomic
     def close(self, request, pk=None):
         shift = self.get_object()
         if shift.status == CashShift.Status.CLOSED:
@@ -174,20 +177,26 @@ class CashShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         actual = serializer.validated_data['actual_balance_at_close']
         notes = serializer.validated_data.get('notes', '')
         
-        # Ожидаемый баланс = баланс кошелька на текущий момент
-        expected = shift.wallet.balance
+        # M5: Ожидаемый баланс = баланс при открытии + приход - расход за смену
+        shift_income = Transaction.objects.filter(
+            wallet_to=shift.wallet,
+            created_at__gte=shift.opened_at,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        shift_expense = Transaction.objects.filter(
+            wallet_from=shift.wallet,
+            created_at__gte=shift.opened_at,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        expected = shift.balance_at_open + shift_income - shift_expense
         
         shift.actual_balance_at_close = actual
         shift.expected_balance_at_close = expected
         shift.discrepancy = actual - expected
         if notes:
-            shift.notes = f"{shift.notes}\\nЗакрытие: {notes}"
+            shift.notes = f"{shift.notes}\nЗакрытие: {notes}"
         shift.status = CashShift.Status.CLOSED
         shift.closed_by = request.user
         shift.closed_at = timezone.now()
         shift.save()
         
-        # Можно создать транзакцию корректировки, если есть расхождение
-        # (в данном варианте просто фиксируем)
         return Response(CashShiftSerializer(shift).data)
 

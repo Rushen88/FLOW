@@ -237,6 +237,13 @@ class CashShift(models.Model):
         verbose_name = 'Кассовая смена'
         verbose_name_plural = 'Кассовые смены'
         ordering = ['-opened_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['wallet'],
+                condition=models.Q(status='open'),
+                name='unique_open_shift_per_wallet',
+            ),
+        ]
 
     def __str__(self):
         return f'Смена {self.id} ({self.get_status_display()})'

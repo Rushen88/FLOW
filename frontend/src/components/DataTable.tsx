@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Card, CardContent, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, TextField, InputAdornment, Pagination,
@@ -38,6 +38,20 @@ export default function DataTable({
   page = 1, totalPages = 1, onPageChange,
   emptyText = 'Нет данных', headerActions, onRowClick, getRowSx,
 }: DataTableProps) {
+  // F4: Debounce search to reduce API calls
+  const [localSearch, setLocalSearch] = useState(search || '')
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
+
+  useEffect(() => { setLocalSearch(search || '') }, [search])
+
+  const handleSearchChange = (v: string) => {
+    setLocalSearch(v)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      onSearchChange?.(v)
+    }, 350)
+  }
+
   return (
     <Card>
       <CardContent>
@@ -46,7 +60,7 @@ export default function DataTable({
             {onSearchChange && (
               <TextField
                 size="small" placeholder={searchPlaceholder}
-                value={search || ''} onChange={(e) => onSearchChange(e.target.value)}
+                value={localSearch} onChange={(e) => handleSearchChange(e.target.value)}
                 sx={{ minWidth: 300 }}
                 slotProps={{ input: { startAdornment: <InputAdornment position="start"><Search /></InputAdornment> } }}
               />

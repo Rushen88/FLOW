@@ -90,16 +90,18 @@ export default function SalesPage() {
   const [users, setUsers] = useState<UserRef[]>([])
   const [bouquetTemplates, setBouquetTemplates] = useState<BouquetTemplateRef[]>([])
   const [stockSummary, setStockSummary] = useState<StockSummary[]>([])
+  const [promoCodes, setPromoCodes] = useState<Ref[]>([])
 
   const fetchHelpers = useCallback(async () => {
     try {
-      const [tpRes, pmRes, custRes, nomRes, usersRes, tplRes] = await Promise.all([
+      const [tpRes, pmRes, custRes, nomRes, usersRes, tplRes, promoRes] = await Promise.all([
         api.get('/core/trading-points/'),
         api.get('/core/payment-methods/'),
         api.get('/customers/customers/'),
         api.get('/nomenclature/items/'),
         api.get('/core/users/'),
         api.get('/nomenclature/bouquet-templates/').catch(() => ({ data: [] })),
+        api.get('/marketing/promo-codes/').catch(() => ({ data: [] })),
       ])
 
       // Определяем торговую точку для фильтрации остатков:
@@ -117,6 +119,7 @@ export default function SalesPage() {
       setUsers(usersRes.data.results || usersRes.data || [])
       setBouquetTemplates(tplRes.data.results || tplRes.data || [])
       setStockSummary(stockRes.data.results || stockRes.data || [])
+      setPromoCodes(promoRes.data.results || promoRes.data || [])
     } catch (err) { notify(extractError(err, 'Ошибка загрузки справочников'), 'error') }
   }, [notify, user?.id, user?.active_trading_point])
 
@@ -188,6 +191,7 @@ export default function SalesPage() {
   const [saleForm, setSaleForm] = useState({
     trading_point: '', customer: '', payment_method: '', notes: '',
     status: 'completed', seller: '', discount_percent: '0',
+    promo_code: '', used_bonuses: '0',
   })
   const [saleItems, setSaleItems] = useState<ItemRow[]>([emptyItemRow()])
   const [saving, setSaving] = useState(false)
@@ -203,6 +207,8 @@ export default function SalesPage() {
       status: 'completed',
       seller: user?.id || '',
       discount_percent: '0',
+      promo_code: '',
+      used_bonuses: '0',
     })
     setSaleItems([emptyItemRow()])
     setSaleDlg(true)
@@ -224,6 +230,8 @@ export default function SalesPage() {
       status: 'completed',
       seller: user?.id || '',
       discount_percent: '0',
+      promo_code: '',
+      used_bonuses: '0',
     })
     setSaleItems([{
       nomenclature: prefill.nomenclature,
@@ -247,6 +255,8 @@ export default function SalesPage() {
       status: sale.status,
       seller: sale.seller || '',
       discount_percent: sale.discount_percent || '0',
+      promo_code: (sale as any).promo_code || '',
+      used_bonuses: (sale as any).used_bonuses || '0',
     })
     if (sale.items?.length) {
       setSaleItems(sale.items.map(it => ({
@@ -326,6 +336,8 @@ export default function SalesPage() {
         notes: saleForm.notes,
         status: saleForm.status,
         discount_percent: saleForm.discount_percent || '0',
+        promo_code: saleForm.promo_code || null,
+        used_bonuses: saleForm.used_bonuses || '0',
         items_data: validItems.map(it => {
           const qty = parseFloat(it.quantity) || 0
           const price = parseFloat(it.price) || 0
@@ -545,7 +557,22 @@ export default function SalesPage() {
               slotProps={{ htmlInput: { min: 0, max: 100, step: 1 } }}
             />
           </Grid>
-          <Grid size={2} />
+          <Grid size={4}>
+            <TextField
+              select fullWidth label="Промокод" value={saleForm.promo_code}
+              onChange={e => setSaleForm(f => ({ ...f, promo_code: e.target.value }))}
+            >
+              <MenuItem value="">— Без промокода —</MenuItem>
+              {promoCodes.map(pc => <MenuItem key={pc.id} value={pc.id}>{pc.name}</MenuItem>)}
+            </TextField>
+          </Grid>
+          <Grid size={2}>
+            <TextField
+              fullWidth label="Бонусы к списанию" type="number" value={saleForm.used_bonuses}
+              onChange={e => setSaleForm(f => ({ ...f, used_bonuses: e.target.value }))}
+              slotProps={{ htmlInput: { min: 0, step: 1 } }}
+            />
+          </Grid>
           <Grid size={12}>
             <TextField
               fullWidth label="Примечания" multiline minRows={1} value={saleForm.notes}
