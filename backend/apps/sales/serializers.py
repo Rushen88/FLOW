@@ -101,7 +101,11 @@ class SaleSerializer(serializers.ModelSerializer):
                 if tp:
                     validated_data['trading_point'] = tp
 
-        lock_organization_row(validated_data['organization_id'])
+        organization = validated_data.get('organization')
+        if not organization:
+            raise serializers.ValidationError({'organization': 'Организация обязательна.'})
+
+        lock_organization_row(organization.id)
 
         sale = Sale.objects.create(**validated_data)
 
@@ -230,7 +234,11 @@ class OrderSerializer(serializers.ModelSerializer):
 
     @db_transaction.atomic
     def create(self, validated_data):
-        lock_organization_row(validated_data['organization_id'])
+        organization = validated_data.get('organization')
+        if not organization:
+            raise serializers.ValidationError({'organization': 'Организация обязательна.'})
+
+        lock_organization_row(organization.id)
 
         if not validated_data.get('number'):
             validated_data['number'] = generate_order_number(validated_data['organization'])
