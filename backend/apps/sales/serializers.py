@@ -72,6 +72,9 @@ class SaleSerializer(serializers.ModelSerializer):
     trading_point_name = serializers.CharField(
         source='trading_point.name', read_only=True, default=''
     )
+    cash_shift_id = serializers.PrimaryKeyRelatedField(
+        source='cash_shift', read_only=True
+    )
 
     class Meta:
         model = Sale
@@ -109,6 +112,17 @@ class SaleSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'organization': 'Организация обязательна.'})
 
         lock_organization_row(organization.id)
+
+        # Автоматически привязываем открытую кассовую смену, если есть
+        trading_point = validated_data.get('trading_point')
+        if trading_point and not validated_data.get('cash_shift'):
+            from apps.finance.models import CashShift
+            open_shift = CashShift.objects.filter(
+                trading_point=trading_point,
+                status=CashShift.Status.OPEN
+            ).order_by('-opened_at').first()
+            if open_shift:
+                validated_data['cash_shift'] = open_shift
 
         sale = Sale.objects.create(**validated_data)
 

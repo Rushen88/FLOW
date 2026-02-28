@@ -183,3 +183,52 @@ class Debt(models.Model):
     @property
     def remaining(self):
         return self.amount - self.paid_amount
+
+
+class CashShift(models.Model):
+    """Кассовая смена (для розничных продаж и сдачи смены)."""
+    class Status(models.TextChoices):
+        OPEN = 'open', 'Открыта'
+        CLOSED = 'closed', 'Закрыта'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        'core.Organization', on_delete=models.CASCADE,
+        related_name='cash_shifts', verbose_name='Организация',
+    )
+    trading_point = models.ForeignKey(
+        'core.TradingPoint', on_delete=models.CASCADE,
+        related_name='cash_shifts', verbose_name='Торговая точка',
+    )
+    wallet = models.ForeignKey(
+        Wallet, on_delete=models.CASCADE,
+        related_name='cash_shifts', verbose_name='Касса (Кошелёк)',
+    )
+    opened_by = models.ForeignKey(
+        'core.User', on_delete=models.SET_NULL, null=True,
+        related_name='opened_cash_shifts', verbose_name='Открыл',
+    )
+    closed_by = models.ForeignKey(
+        'core.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='closed_cash_shifts', verbose_name='Закрыл',
+    )
+    status = models.CharField('Статус', max_length=10, choices=Status.choices, default=Status.OPEN)
+    
+    opened_at = models.DateTimeField('Время открытия', auto_now_add=True)
+    closed_at = models.DateTimeField('Время закрытия', null=True, blank=True)
+    
+    balance_at_open = models.DecimalField('Остаток при открытии', max_digits=14, decimal_places=2, default=0)
+    expected_balance_at_close = models.DecimalField('Ожидаемый остаток', max_digits=14, decimal_places=2, null=True, blank=True)
+    actual_balance_at_close = models.DecimalField('Фактический остаток', max_digits=14, decimal_places=2, null=True, blank=True)
+    discrepancy = models.DecimalField('Расхождение', max_digits=14, decimal_places=2, null=True, blank=True)
+    
+    notes = models.TextField('Примечания', blank=True, default='')
+
+    class Meta:
+        db_table = 'cash_shifts'
+        verbose_name = 'Кассовая смена'
+        verbose_name_plural = 'Кассовые смены'
+        ordering = ['-opened_at']
+
+    def __str__(self):
+        return f'Смена {self.id} ({self.get_status_display()})'

@@ -354,3 +354,20 @@ export interface Delivery {
   photo_proof: string | null
   actual_delivered_at: string | null
 }
+
+export interface CashShift {
+  id: string;
+  trading_point: string;
+  wallet: string;
+  opened_by_name: string;
+  closed_by_name: string;
+  status: 'open' | 'closed';
+  opened_at: string;
+  closed_at: string | null;
+  balance_at_open: string;
+  expected_balance_at_close: string | null;
+  actual_balance_at_close: string | null;
+  discrepancy: string | null;
+  notes: string;
+}
+

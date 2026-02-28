@@ -131,3 +131,64 @@ class DebtViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Debt.objects.select_related('organization')
         return _tenant_filter(qs, self.request.user)
+
+from .models import CashShift
+from .serializers import CashShiftSerializer, CashShiftCloseSerializer
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework import status
+from django.utils import timezone
+from django.db.models import Sum
+
+class CashShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
+    serializer_class = CashShiftSerializer
+    queryset = CashShift.objects.all()
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['status', 'trading_point', 'wallet']
+    
+    def get_queryset(self):
+        qs = CashShift.objects.select_related('opened_by', 'closed_by', 'wallet', 'trading_point')
+        return _tenant_filter(qs, self.request.user)
+
+    def perform_create(self, serializer):
+        wallet = serializer.validated_data['wallet']
+        # Проверяем, есть ли открытая смена у этой кассы
+        if CashShift.objects.filter(wallet=wallet, status=CashShift.Status.OPEN).exists():
+            raise serializers.ValidationError({'wallet': 'Для этой кассы уже есть открытая смена.'})
+        
+        serializer.save(
+            organization=self.request.user.organization,
+            opened_by=self.request.user,
+            balance_at_open=wallet.balance,
+            status=CashShift.Status.OPEN
+        )
+
+    @action(detail=True, methods=['post'])
+    def close(self, request, pk=None):
+        shift = self.get_object()
+        if shift.status == CashShift.Status.CLOSED:
+            return Response({'detail': 'Смена уже закрыта.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        serializer = CashShiftCloseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        actual = serializer.validated_data['actual_balance_at_close']
+        notes = serializer.validated_data.get('notes', '')
+        
+        # Ожидаемый баланс = баланс кошелька на текущий момент
+        expected = shift.wallet.balance
+        
+        shift.actual_balance_at_close = actual
+        shift.expected_balance_at_close = expected
+        shift.discrepancy = actual - expected
+        if notes:
+            shift.notes = f"{shift.notes}\\nЗакрытие: {notes}"
+        shift.status = CashShift.Status.CLOSED
+        shift.closed_by = request.user
+        shift.closed_at = timezone.now()
+        shift.save()
+        
+        # Можно создать транзакцию корректировки, если есть расхождение
+        # (в данном варианте просто фиксируем)
+        return Response(CashShiftSerializer(shift).data)
+

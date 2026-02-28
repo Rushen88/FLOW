@@ -43,6 +43,10 @@ class Sale(models.Model):
         'core.PaymentMethod', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='sales', verbose_name='Способ оплаты',
     )
+    cash_shift = models.ForeignKey(
+        'finance.CashShift', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sales', verbose_name='Кассовая смена',
+    )
     is_paid = models.BooleanField('Оплачено', default=False)
     notes = models.TextField('Примечания', blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)

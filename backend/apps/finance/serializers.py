@@ -34,3 +34,21 @@ class DebtSerializer(serializers.ModelSerializer):
         model = Debt
         fields = '__all__'
         read_only_fields = ['organization']
+
+from .models import CashShift
+
+class CashShiftSerializer(serializers.ModelSerializer):
+    opened_by_name = serializers.CharField(source='opened_by.get_full_name', read_only=True, default='')
+    closed_by_name = serializers.CharField(source='closed_by.get_full_name', read_only=True, default='')
+    wallet_name = serializers.CharField(source='wallet.name', read_only=True, default='')
+    trading_point_name = serializers.CharField(source='trading_point.name', read_only=True, default='')
+
+    class Meta:
+        model = CashShift
+        fields = '__all__'
+        read_only_fields = ['organization', 'opened_by', 'closed_by', 'opened_at', 'closed_at', 'actual_balance_at_close', 'discrepancy', 'status']
+
+class CashShiftCloseSerializer(serializers.Serializer):
+    actual_balance_at_close = serializers.DecimalField(max_digits=14, decimal_places=2, required=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+

@@ -303,6 +303,7 @@ def assemble_bouquet(
     bouquet_qty = Decimal(str(quantity))
 
     # 1. Списать компоненты
+    total_cost = Decimal('0')
     for comp in components:
         comp_nomenclature = comp['nomenclature']
         comp_qty = Decimal(str(comp['quantity'])) * bouquet_qty
@@ -312,6 +313,8 @@ def assemble_bouquet(
         if comp_nomenclature.nomenclature_type == 'service':
             continue
 
+        # В ручной сборке мы не разрешаем уход в минус (в отличие от продаж).
+        # fifo_write_off бросит InsufficientStockError при нехватке.
         fifo_result = fifo_write_off(
             organization=organization,
             warehouse=comp_warehouse,
@@ -332,24 +335,12 @@ def assemble_bouquet(
                 user=user,
                 notes=f'Сборка букета: {nomenclature_bouquet.name}',
             )
+            # Точный расчёт себестоимости по FIFO-партиям
+            total_cost += Decimal(str(r['qty'])) * r['price']
 
         _update_stock_balance(
             organization, comp_warehouse, comp_nomenclature, -comp_qty
         )
-
-    # 2. Себестоимость букета — сумма себестоимости всех компонентов
-    total_cost = Decimal('0')
-    for comp in components:
-        comp_nomenclature = comp['nomenclature']
-        comp_warehouse = comp.get('warehouse') or warehouse_from
-        # Подсчитаем стоимость по средней закупочной
-        sb = StockBalance.objects.filter(
-            organization=organization,
-            warehouse=comp_warehouse,
-            nomenclature=comp_nomenclature,
-        ).first()
-        avg_price = sb.avg_purchase_price if sb else comp_nomenclature.purchase_price
-        total_cost += avg_price * Decimal(str(comp['quantity']))
 
     cost_per_unit = total_cost if bouquet_qty == 1 else total_cost / bouquet_qty
 

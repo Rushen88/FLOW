@@ -1,3 +1,4 @@
+import CashShiftDialog from './CashShiftDialog';
 import { useState, useEffect, useRef } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
@@ -62,6 +63,10 @@ export default function Layout() {
   const [allOrgs, setAllOrgs] = useState<OrgOption[]>([])
   const [allTradingPoints, setAllTradingPoints] = useState<{ id: string; name: string }[]>([])
   const lastNegativeReminderRef = useRef<number>(0)
+  
+  // Cash shift state
+  const [cashShiftDialogOpen, setCashShiftDialogOpen] = useState(false);
+  const [activeShift, setActiveShift] = useState<any | null>(null);
 
   const currentWidth = drawerOpen ? DRAWER_WIDTH : DRAWER_COLLAPSED
 
@@ -144,6 +149,31 @@ export default function Layout() {
   // Определяем «рабочую» организацию: для суперадмина — active, для обычного — organization
   const workingOrg = user?.is_superuser ? user.active_organization : user?.organization
   const showOnboarding = !user?.is_superuser && !user?.organization
+
+  const checkActiveShift = async () => {
+    if (!user?.active_trading_point) {
+      setActiveShift(null);
+      return;
+    }
+    try {
+      const res = await api.get('/finance/cash-shifts/', {
+        params: { status: 'open', trading_point: user.active_trading_point }
+      });
+      const shifts = res.data.results || res.data;
+      if (shifts.length > 0) setActiveShift(shifts[0]);
+      else setActiveShift(null);
+    } catch {
+      setActiveShift(null);
+    }
+  };
+
+  useEffect(() => {
+    if (user?.active_trading_point) {
+      checkActiveShift();
+    } else {
+      setActiveShift(null);
+    }
+  }, [user?.active_trading_point]);
 
   // Фильтруем пункты навигации по роли
   const visibleNav = navItems.filter(item => {
@@ -309,6 +339,19 @@ export default function Layout() {
               <Chip label="SA" size="small" color="error" sx={{ mr: 1, fontWeight: 700 }} />
             )}
 
+            {/* Кассовая смена */}
+            {user?.active_trading_point && (
+              <Button
+                variant={activeShift ? "contained" : "outlined"}
+                color={activeShift ? "success" : "warning"}
+                size="small"
+                onClick={() => setCashShiftDialogOpen(true)}
+                sx={{ mr: 2, borderRadius: 2 }}
+              >
+                {activeShift ? `Смена открыта (${activeShift.wallet_name})` : "Смена закрыта"}
+              </Button>
+            )}
+
             <IconButton onClick={(e) => setAnchorEl(e.currentTarget)}>
               <Avatar sx={{ bgcolor: theme.palette.primary.main, width: 36, height: 36 }}>
                 {user?.first_name?.[0] || user?.username?.[0] || 'U'}
@@ -366,6 +409,12 @@ export default function Layout() {
           <Outlet />
         </Box>
       </Box>
+      <CashShiftDialog
+        open={cashShiftDialogOpen}
+        onClose={() => setCashShiftDialogOpen(false)}
+        activeShift={activeShift}
+        onShiftChanged={() => checkActiveShift()}
+      />
     </Box>
   )
 }

@@ -7,6 +7,7 @@ router.register('wallets', views.WalletViewSet)
 router.register('categories', views.TransactionCategoryViewSet)
 router.register('transactions', views.TransactionViewSet)
 router.register('debts', views.DebtViewSet)
+router.register('cash-shifts', views.CashShiftViewSet, basename='cashshift')
 
 urlpatterns = [
     path('', include(router.urls)),
