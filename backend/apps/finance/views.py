@@ -4,10 +4,15 @@ from rest_framework import viewsets, filters, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
-from django.db import models as db_models, transaction as db_transaction
+from django.db import transaction as db_transaction
 from django.db.models import Sum
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Wallet, TransactionCategory, Transaction, Debt
+from .services import (
+    apply_wallet_balance,
+    validate_wallet_ownership,
+    validate_transaction_wallet_rules,
+)
 from .serializers import (
     WalletSerializer, TransactionCategorySerializer,
     TransactionSerializer, DebtSerializer,
@@ -54,48 +59,6 @@ class TransactionCategoryViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         return qs
 
 
-def _apply_wallet_balance(txn_or_id, reverse=False):
-    """
-    Обновить баланс кошельков по транзакции.
-    reverse=True — откатить (используется при удалении/обновлении).
-    Вызывается ВНУТРИ transaction.atomic.
-    """
-    if hasattr(txn_or_id, 'amount'):
-        txn = txn_or_id
-    else:
-        txn = Transaction.objects.get(pk=txn_or_id)
-
-    amount = txn.amount
-    if reverse:
-        # Откат: возвращаем средства обратно
-        if txn.wallet_from_id:
-            Wallet.objects.select_for_update().filter(pk=txn.wallet_from_id).update(
-                balance=db_models.F('balance') + amount
-            )
-        if txn.wallet_to_id:
-            Wallet.objects.select_for_update().filter(pk=txn.wallet_to_id).update(
-                balance=db_models.F('balance') - amount
-            )
-    else:
-        # Прямое применение
-        if txn.wallet_from_id:
-            # Проверка allow_negative
-            wallet_from = Wallet.objects.select_for_update().get(pk=txn.wallet_from_id)
-            new_balance = wallet_from.balance - amount
-            if new_balance < 0 and not wallet_from.allow_negative:
-                raise ValidationError({
-                    'wallet_from': f'Недостаточно средств в кошельке «{wallet_from.name}». '
-                                   f'Баланс: {wallet_from.balance}, списание: {amount}.'
-                })
-            Wallet.objects.filter(pk=wallet_from.pk).update(
-                balance=db_models.F('balance') - amount
-            )
-        if txn.wallet_to_id:
-            Wallet.objects.select_for_update().filter(pk=txn.wallet_to_id).update(
-                balance=db_models.F('balance') + amount
-            )
-
-
 class TransactionViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = TransactionSerializer
     queryset = Transaction.objects.all()
@@ -118,32 +81,43 @@ class TransactionViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         # Валидация: кошельки принадлежат организации
         wallet_from = serializer.validated_data.get('wallet_from')
         wallet_to = serializer.validated_data.get('wallet_to')
-        if wallet_from and str(wallet_from.organization_id) != str(org.id):
-            raise ValidationError({'wallet_from': 'Кошелёк не принадлежит вашей организации.'})
-        if wallet_to and str(wallet_to.organization_id) != str(org.id):
-            raise ValidationError({'wallet_to': 'Кошелёк не принадлежит вашей организации.'})
+        validate_wallet_ownership(org, wallet_from=wallet_from, wallet_to=wallet_to)
+        validate_transaction_wallet_rules(
+            transaction_type=serializer.validated_data.get('transaction_type'),
+            wallet_from=wallet_from,
+            wallet_to=wallet_to,
+        )
 
         serializer.save(organization=org)
         txn = serializer.instance
-        _apply_wallet_balance(txn, reverse=False)
+        apply_wallet_balance(txn, reverse=False)
 
     @db_transaction.atomic
     def perform_update(self, serializer):
         """Обновление транзакции: откат старого баланса → применение нового."""
-        old_txn = self.get_object()
+        old_txn = Transaction.objects.select_for_update().get(pk=self.get_object().pk)
         # Откат старых значений
-        _apply_wallet_balance(old_txn, reverse=True)
+        apply_wallet_balance(old_txn, reverse=True)
 
         org = _resolve_org(self.request.user)
+        wallet_from = serializer.validated_data.get('wallet_from')
+        wallet_to = serializer.validated_data.get('wallet_to')
+        validate_wallet_ownership(org, wallet_from=wallet_from, wallet_to=wallet_to)
+        validate_transaction_wallet_rules(
+            transaction_type=serializer.validated_data.get('transaction_type', old_txn.transaction_type),
+            wallet_from=wallet_from,
+            wallet_to=wallet_to,
+        )
         serializer.save(organization=org)
         txn = serializer.instance
         # Применение новых значений
-        _apply_wallet_balance(txn, reverse=False)
+        apply_wallet_balance(txn, reverse=False)
 
     @db_transaction.atomic
     def perform_destroy(self, instance):
         """Удаление транзакции: откат баланса."""
-        _apply_wallet_balance(instance, reverse=True)
+        locked_txn = Transaction.objects.select_for_update().get(pk=instance.pk)
+        apply_wallet_balance(locked_txn, reverse=True)
         instance.delete()
 
 
