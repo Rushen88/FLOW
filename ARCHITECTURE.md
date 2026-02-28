@@ -813,7 +813,7 @@ npm run dev                       # → http://localhost:3000
 
 ## Changelog
 
-### 2025-01-XX — Архитектурный аудит и исправления
+### 2026-03-01 — Архитектурный аудит и исправления
 
 #### Backend
 
@@ -846,3 +846,9 @@ npm run dev                       # → http://localhost:3000
 - ✅ Error Boundary: добавлен class component с fallback UI и кнопкой "Обновить страницу"
 - ✅ PageLoader: добавлен компонент загрузки для Suspense fallback
 - ✅ Каждый Route обёрнут в `<Suspense fallback={<PageLoader />}>`
+
+#### Infrastructure / Deploy
+
+- ✅ Устранён дрейф схемы БД: миграции constraints добавлены в репозиторий (`core.0007`, `customers.0002`, `inventory.0003`, `marketing.0002`)
+- ✅ Подтверждена синхронизация моделей и миграций: `manage.py makemigrations` → `No changes detected`
+- ✅ Продакшен-деплой выполнен на сервер `130.49.146.199`, контейнеры `backend/frontend/db` в статусе `Up`
