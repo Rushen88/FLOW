@@ -37,15 +37,15 @@ class PaymentMethodAdmin(admin.ModelAdmin):
 
 @admin.register(TenantContact)
 class TenantContactAdmin(admin.ModelAdmin):
-    list_display = ('organization', 'role', 'name', 'phone', 'email')
+    list_display = ('organization', 'position', 'name', 'phone', 'email')
     list_filter = ('organization',)
 
 @admin.register(TenantPayment)
 class TenantPaymentAdmin(admin.ModelAdmin):
-    list_display = ('organization', 'amount', 'payment_date', 'period_start', 'period_end')
+    list_display = ('organization', 'amount', 'payment_date', 'period_from', 'period_to')
     list_filter = ('organization',)
 
 @admin.register(TenantNote)
 class TenantNoteAdmin(admin.ModelAdmin):
-    list_display = ('organization', 'author', 'created_at')
+    list_display = ('organization', 'created_by', 'created_at')
     list_filter = ('organization',)

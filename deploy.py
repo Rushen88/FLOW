@@ -11,8 +11,8 @@ def run_command(ssh, command):
     out = stdout.read().decode('utf-8')
     err = stderr.read().decode('utf-8')
     
-    if out: print(f"STDOUT:\n{out}")
-    if err: print(f"STDERR:\n{err}")
+    if out: print(f"STDOUT:\n{out.encode('ascii', 'replace').decode('ascii')}")
+    if err: print(f"STDERR:\n{err.encode('ascii', 'replace').decode('ascii')}")
     
     if exit_status != 0:
         print(f"Command failed with exit status {exit_status}")
