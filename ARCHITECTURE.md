@@ -606,9 +606,10 @@ npm run dev                       # → http://localhost:3000
 - **inventory/services.py** (`_update_stock_balance`): удалён «clamp» `if sb.quantity < 0: sb.quantity = Decimal('0')`. Теперь `StockBalance.quantity` может хранить реальное отрицательное значение после продажи в дефицит.
 - Commit: `674cea6`
 
-### Исправление: 500 при удалении продажи — Customer.purchases_count
-- **sales/services.py** (`rollback_sale_effects_before_delete`): откат статистики клиента переведён на `Greatest(F(...) - value, Value(0))` (через `django.db.models.functions.Greatest`), чтобы `PositiveIntegerField purchases_count` не уходил в минус и не вызывал `IntegrityError`.
-- Commit: `7155aba`
+### Исправление: 500 при удалении продажи
+- **sales/services.py** (`rollback_sale_effects_before_delete`): убран `select_for_update()` из запроса `sale_movements` (из-за ошибки `FOR UPDATE cannot be applied to the nullable side of an outer join`, так как присутствовал `select_related('batch')`, где `batch` — nullable ForeignKey).
+- **sales/services.py**: откат статистики клиента переведён на `Greatest(F(...) - value, Value(0))` (через `django.db.models.functions.Greatest`), чтобы `PositiveIntegerField purchases_count` не уходил в минус и не вызывал `IntegrityError`.
+- Commit: `c641add`
 
 ### Полный откат продажи при удалении
 - **sales/services.py**: добавлена функция `rollback_sale_effects_before_delete(sale)`:
