@@ -117,7 +117,6 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         return (
             qs
             .exclude(nomenclature__nomenclature_type='service')
-            .filter(quantity__gt=0)
             .order_by('nomenclature__name')
         )
 

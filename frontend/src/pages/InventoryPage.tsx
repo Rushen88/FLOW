@@ -494,9 +494,35 @@ export default function InventoryPage() {
               </Grid>
               <DataTable
                 columns={[
-                  { key: 'nomenclature_name', label: 'Номенклатура', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
+                  {
+                    key: 'nomenclature_name',
+                    label: 'Номенклатура',
+                    render: (v: string, row: StockBalance) => {
+                      const qty = parseFloat(row.quantity)
+                      const isNegative = qty < 0
+                      return (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography fontWeight={500}>{v}</Typography>
+                          {isNegative && <Chip size="small" color="error" label="Минус" />}
+                        </Box>
+                      )
+                    }
+                  },
                   { key: 'warehouse_name', label: 'Склад' },
-                  { key: 'quantity', label: 'Кол-во', align: 'right', render: (v: string) => fmtNum(v) },
+                  {
+                    key: 'quantity',
+                    label: 'Кол-во',
+                    align: 'right',
+                    render: (v: string) => {
+                      const qty = parseFloat(v)
+                      const isNegative = qty < 0
+                      return (
+                        <Typography color={isNegative ? 'error.main' : 'inherit'} fontWeight={isNegative ? 700 : 400}>
+                          {fmtNum(v)}
+                        </Typography>
+                      )
+                    }
+                  },
                   { key: 'avg_purchase_price', label: 'Ср. цена', align: 'right', render: (v: string) => `${fmtNum(v)} ₽` },
                   { key: '_total', label: 'Сумма', align: 'right', render: (_: any, row: StockBalance) => `${fmtNum(parseFloat(row.quantity) * parseFloat(row.avg_purchase_price))} ₽` },
                   { key: 'updated_at', label: 'Обновлено', render: (v: string) => fmtDateTime(v) },
@@ -544,6 +570,16 @@ export default function InventoryPage() {
                 ]}
                 rows={stock} loading={stockLoad} emptyText="Остатков нет"
                 search={stockSearch} onSearchChange={setStockSearch} searchPlaceholder="Поиск по номенклатуре..."
+                getRowSx={(row: StockBalance) => {
+                  const qty = parseFloat(row.quantity)
+                  if (qty < 0) {
+                    return {
+                      bgcolor: 'error.lighter',
+                      '&:hover': { bgcolor: 'error.light' },
+                    }
+                  }
+                  return undefined
+                }}
               />
             </>
           )}

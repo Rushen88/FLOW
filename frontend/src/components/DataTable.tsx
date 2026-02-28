@@ -4,6 +4,7 @@ import {
   TableHead, TableRow, TextField, InputAdornment, Pagination,
   Box, Typography, Skeleton, Chip,
 } from '@mui/material'
+import { SxProps, Theme } from '@mui/material/styles'
 import { Search } from '@mui/icons-material'
 import { ReactNode } from 'react'
 
@@ -28,13 +29,14 @@ interface DataTableProps {
   emptyText?: string
   headerActions?: ReactNode
   onRowClick?: (row: any) => void
+  getRowSx?: (row: any) => SxProps<Theme> | undefined
 }
 
 export default function DataTable({
   columns, rows, loading = false,
   search, onSearchChange, searchPlaceholder = 'Поиск...',
   page = 1, totalPages = 1, onPageChange,
-  emptyText = 'Нет данных', headerActions, onRowClick,
+  emptyText = 'Нет данных', headerActions, onRowClick, getRowSx,
 }: DataTableProps) {
   return (
     <Card>
@@ -84,7 +86,7 @@ export default function DataTable({
                 <TableRow
                   key={row.id || idx} hover
                   onClick={() => onRowClick?.(row)}
-                  sx={onRowClick ? { cursor: 'pointer' } : undefined}
+                  sx={{ ...(onRowClick ? { cursor: 'pointer' } : {}), ...(getRowSx?.(row) || {}) }}
                 >
                   {columns.map((col) => (
                     <TableCell key={col.key} align={col.align || 'left'}>
