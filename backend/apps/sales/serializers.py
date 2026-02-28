@@ -101,6 +101,9 @@ class SaleSerializer(serializers.ModelSerializer):
                 if tp:
                     validated_data['trading_point'] = tp
 
+        if not validated_data.get('trading_point'):
+            raise serializers.ValidationError({'trading_point': 'Выберите торговую точку.'})
+
         organization = validated_data.get('organization')
         if not organization:
             raise serializers.ValidationError({'organization': 'Организация обязательна.'})
@@ -143,6 +146,10 @@ class SaleSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         items_data = validated_data.pop('items_data', None)
         validated_data.pop('is_paid', None)
+
+        if 'trading_point' in validated_data and not validated_data.get('trading_point'):
+            raise serializers.ValidationError({'trading_point': 'Торговая точка обязательна.'})
+
         old_status = instance.status
         old_is_paid = instance.is_paid
         instance = super().update(instance, validated_data)

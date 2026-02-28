@@ -673,6 +673,8 @@ npm run dev                       # → http://localhost:3000
 ### Hotfix (2026-03-01) — Ошибка 500 при создании продажи/заказа
 - **sales/serializers.py**: устранена причина `Server Error 500` в `SaleSerializer.create()` и `OrderSerializer.create()` — ранее использовался `validated_data['organization_id']`, которого нет при `perform_create(serializer.save(organization=org))`.
 - Добавлена безопасная обработка через объект `organization` + явная `ValidationError`, если организация отсутствует.
+- **sales/serializers.py**: добавлена явная валидация `trading_point` в `SaleSerializer.create/update`, чтобы исключить `IntegrityError` (NOT NULL) и переводить проблему в контролируемый 400 ответ.
+- **frontend/SalesPage.tsx**: добавлена pre-submit валидация торговой точки (без выбранной точки сохранение не отправляется на backend).
 
 ### Критические исправления
 - **core/views.py**: `TradingPointViewSet`, `WarehouseViewSet`, `PaymentMethodViewSet` — READ-доступ открыт для всех аутентифицированных (раньше только owner/admin). Запись остаётся за owner/admin. Это исправляло: «Ошибка загрузки данных дашборда», «Ошибка загрузки остатков», «Server Error 500» на странице Продажи.

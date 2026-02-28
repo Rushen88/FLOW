@@ -309,11 +309,17 @@ export default function SalesPage() {
   const saveSale = async () => {
     setSaving(true)
     try {
-const validItems = saleItems.filter(it => it.nomenclature && parseFloat(it.quantity) > 0)
+      if (!saleForm.trading_point) {
+        notify('Выберите торговую точку', 'warning')
+        setSaving(false)
+        return
+      }
+
+      const validItems = saleItems.filter(it => it.nomenclature && parseFloat(it.quantity) > 0)
         if (validItems.length === 0) { notify('Добавьте хотя бы одну позицию с количеством больше нуля', 'warning'); setSaving(false); return }
 
       const payload: Record<string, any> = {
-        trading_point: saleForm.trading_point || null,
+        trading_point: saleForm.trading_point,
         customer: saleForm.customer || null,
         payment_method: saleForm.payment_method || null,
         seller: saleForm.seller || null,
