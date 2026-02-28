@@ -1,16 +1,10 @@
 from django.contrib import admin
-from .models import Position, Employee, PayrollScheme, Shift, SalaryAccrual
+from .models import Position, PayrollScheme, Shift, SalaryAccrual
 
 
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
     list_display = ('name', 'base_salary')
-
-
-@admin.register(Employee)
-class EmployeeAdmin(admin.ModelAdmin):
-    list_display = ('last_name', 'first_name', 'position', 'trading_point', 'is_active')
-    list_filter = ('position', 'trading_point', 'is_active')
 
 
 @admin.register(PayrollScheme)

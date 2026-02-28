@@ -9,6 +9,7 @@ import {
   LocalShipping, CheckCircle, Cancel,
 } from '@mui/icons-material'
 import api from '../api'
+import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 import extractError from '../utils/extractError'
 import DataTable from '../components/DataTable'
@@ -71,6 +72,7 @@ const emptyItemRow = () => ({ nomenclature: '', quantity: '1', price: '', discou
 
 export default function OrdersPage() {
   const { notify } = useNotification()
+  const { user } = useAuth()
 
   // ─── Helper data ───
   const [tradingPoints, setTradingPoints] = useState<Ref[]>([])
@@ -91,7 +93,7 @@ export default function OrdersPage() {
       setCustomers(custRes.data.results || custRes.data || [])
       setNomenclatures(nomRes.data.results || nomRes.data || [])
     } catch (err) { notify(extractError(err, 'Ошибка загрузки справочников'), 'error') }
-  }, [notify])
+  }, [notify, user?.active_trading_point])
 
   useEffect(() => { fetchHelpers() }, [fetchHelpers])
 
@@ -121,7 +123,7 @@ export default function OrdersPage() {
       })
       .catch((err) => { setOrders([]); notify(extractError(err, 'Ошибка загрузки заказов'), 'error') })
       .finally(() => setLoading(false))
-  }, [page, search, filterStatus, filterSource, notify])
+  }, [page, search, filterStatus, filterSource, notify, user?.active_trading_point])
 
   useEffect(() => { fetchOrders() }, [fetchOrders])
 

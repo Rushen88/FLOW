@@ -39,17 +39,31 @@ class UserSerializer(serializers.ModelSerializer):
     active_organization_name = serializers.CharField(
         source='active_organization.name', read_only=True, default=''
     )
+    active_trading_point_name = serializers.CharField(
+        source='active_trading_point.name', read_only=True, default=''
+    )
+    position_name = serializers.CharField(
+        source='position.name', read_only=True, default=''
+    )
+    trading_point_name = serializers.CharField(
+        source='trading_point.name', read_only=True, default=''
+    )
 
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name',
                   'patronymic', 'phone', 'role', 'organization', 'organization_name',
                   'active_organization', 'active_organization_name',
+                  'active_trading_point', 'active_trading_point_name',
+                  'trading_point', 'trading_point_name',
+                  'position', 'position_name',
+                  'hire_date', 'fire_date', 'notes',
                   'avatar', 'is_active', 'is_superuser', 'full_name']
-        read_only_fields = ['id', 'organization', 'is_superuser', 'active_organization']
+        read_only_fields = ['id', 'organization', 'is_superuser', 'active_organization',
+                            'active_trading_point']
 
     def get_full_name(self, obj):
-        return obj.get_full_name()
+        return obj.full_name
 
 
 class UserCreateSerializer(serializers.ModelSerializer):

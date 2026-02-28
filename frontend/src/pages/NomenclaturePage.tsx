@@ -17,7 +17,7 @@ interface NomItem {
   id: string; organization: string; group: string | null; name: string; nomenclature_type: string
   sku: string; barcode: string; unit: string | null; purchase_price: string; retail_price: string
   min_price: string; markup_percent: string; image: string | null; color: string; country: string
-  season_start: number | null; season_end: number | null; shelf_life_days: number | null
+  shelf_life_days: number | null
   min_stock: number | null; is_active: boolean; notes: string; group_name: string; unit_name: string
 }
 interface NomGroup { id: string; organization: string; name: string; parent: string | null; sort_order: number; children?: NomGroup[] }
@@ -142,13 +142,20 @@ export default function NomenclaturePage() {
   useEffect(() => { if (tab === 3) fetchTemplates() }, [tab, fetchTemplates])
 
   // ─── Flatten groups for selects ───
-  const flatGroups: NomGroup[] = []
-  const flatten = (list: NomGroup[]) => {
-    list.forEach(g => { flatGroups.push(g); if (g.children?.length) flatten(g.children) })
-  }
-  flatten(groups)
+    const flatGroups: NomGroup[] = []
+    const seenGroups = new Set<string>()
+    const flatten = (list: NomGroup[]) => {
+      list.forEach(g => { 
+        if (!seenGroups.has(g.id)) {
+          seenGroups.add(g.id)
+          flatGroups.push(g)
+        }
+        if (g.children?.length) flatten(g.children) 
+      })
+    }
+    flatten(groups)
 
-  // ─── Item CRUD ───
+
   const openItemDlg = (item?: NomItem) => {
     if (item) {
       setEditItem(item)
@@ -244,7 +251,7 @@ export default function NomenclaturePage() {
 
   // ─── Bouquet Template CRUD ───
   const bouquetItems = items.filter(i => i.nomenclature_type === 'bouquet' || i.nomenclature_type === 'composition')
-  const componentItems = items.filter(i => i.nomenclature_type !== 'bouquet' && i.nomenclature_type !== 'composition' && i.nomenclature_type !== 'service')
+  const componentItems = items.filter(i => i.nomenclature_type !== 'bouquet' && i.nomenclature_type !== 'composition')
 
   const openTplDlg = (tpl?: BouquetTemplate) => {
     if (tpl) {
@@ -314,9 +321,17 @@ export default function NomenclaturePage() {
         ))
         notify('Шаблон обновлён')
       } else {
+        // Create nomenclature item first for the new bouquet
+        const nomRes = await api.post('/nomenclature/items/', {
+          name: tplForm.bouquet_name || 'Новый букет',
+          nomenclature_type: 'bouquet',
+          is_active: true
+        })
+        const nomId = nomRes.data.id
+
         // Create template
         const tplRes = await api.post('/nomenclature/bouquet-templates/', {
-          nomenclature: tplForm.nomenclature,
+          nomenclature: nomId,
           bouquet_name: tplForm.bouquet_name,
           assembly_time_minutes: tplForm.assembly_time_minutes,
           difficulty: tplForm.difficulty,
@@ -548,34 +563,25 @@ export default function NomenclaturePage() {
       <EntityFormDialog open={tplDlg} onClose={() => setTplDlg(false)} onSubmit={saveTpl}
         title={editTpl ? 'Редактировать шаблон букета' : 'Новый шаблон букета'}
         submitText={editTpl ? 'Сохранить' : 'Создать'}
-        loading={tplSaving} disabled={!tplForm.nomenclature || tplComponents.length === 0} maxWidth="md">
+        loading={tplSaving} disabled={!tplForm.bouquet_name || tplComponents.length === 0} maxWidth="md">
         <Grid container spacing={2}>
           <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="Букет (номенклатура)" required select fullWidth value={tplForm.nomenclature}
-              disabled={!!editTpl}
-              onChange={e => setTplForm({ ...tplForm, nomenclature: e.target.value })}>
-              {bouquetItems.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
-            </TextField>
+            <TextField label="Букет (наименование)" required fullWidth value={tplForm.bouquet_name} disabled={!!editTpl} onChange={e => setTplForm({ ...tplForm, bouquet_name: e.target.value })} />
           </Grid>
           <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="Название букета" fullWidth value={tplForm.bouquet_name}
-              onChange={e => setTplForm({ ...tplForm, bouquet_name: e.target.value })}
-              placeholder="Оставьте пустым — будет использовано название номенклатуры" />
+            <TextField label="Описание" fullWidth value={tplForm.description}
+              onChange={e => setTplForm({ ...tplForm, description: e.target.value })} />
           </Grid>
         </Grid>
         <Grid container spacing={2}>
-          <Grid size={{ xs: 4 }}>
+          <Grid size={{ xs: 6 }}>
             <TextField label="Время сборки (мин)" type="number" fullWidth value={tplForm.assembly_time_minutes}
               onChange={e => setTplForm({ ...tplForm, assembly_time_minutes: Number(e.target.value) || 0 })} />
           </Grid>
-          <Grid size={{ xs: 4 }}>
+          <Grid size={{ xs: 6 }}>
             <TextField label="Сложность (1-5)" type="number" fullWidth value={tplForm.difficulty}
               slotProps={{ htmlInput: { min: 1, max: 5 } }}
               onChange={e => setTplForm({ ...tplForm, difficulty: Math.min(5, Math.max(1, Number(e.target.value) || 1)) })} />
-          </Grid>
-          <Grid size={{ xs: 4 }}>
-            <TextField label="Описание" fullWidth value={tplForm.description}
-              onChange={e => setTplForm({ ...tplForm, description: e.target.value })} />
           </Grid>
         </Grid>
 

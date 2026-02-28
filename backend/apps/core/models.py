@@ -63,18 +63,43 @@ class User(AbstractUser):
         verbose_name='Активная организация',
         help_text='Для суперадминов: организация, от имени которой ведётся работа.',
     )
+    active_trading_point = models.ForeignKey(
+        'core.TradingPoint', on_delete=models.SET_NULL,
+        related_name='active_users', null=True, blank=True,
+        verbose_name='Активная торговая точка',
+        help_text='Торговая точка, в контексте которой работает пользователь.',
+    )
     role = models.CharField('Роль', max_length=20, choices=Role.choices, default=Role.SELLER)
     patronymic = models.CharField('Отчество', max_length=150, blank=True, default='')
     phone = models.CharField('Телефон', max_length=20, blank=True, default='')
     avatar = models.ImageField('Аватар', upload_to='avatars/', blank=True, null=True)
 
+    # ── Employee fields (merged) ──
+    position = models.ForeignKey(
+        'staff.Position', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='employees', verbose_name='Должность',
+    )
+    trading_point = models.ForeignKey(
+        'core.TradingPoint', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='employees', verbose_name='Торговая точка',
+        help_text='Закреплённая торговая точка сотрудника.',
+    )
+    hire_date = models.DateField('Дата приёма', null=True, blank=True)
+    fire_date = models.DateField('Дата увольнения', null=True, blank=True)
+    notes = models.TextField('Примечания', blank=True, default='')
+
     class Meta:
         db_table = 'users'
-        verbose_name = 'Пользователь'
-        verbose_name_plural = 'Пользователи'
+        verbose_name = 'Сотрудник'
+        verbose_name_plural = 'Сотрудники'
 
     def __str__(self):
-        return self.get_full_name() or self.username
+        return self.full_name or self.username
+
+    @property
+    def full_name(self):
+        parts = [self.last_name, self.first_name, self.patronymic]
+        return ' '.join(p for p in parts if p)
 
 
 class TradingPoint(models.Model):

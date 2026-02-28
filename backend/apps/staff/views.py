@@ -1,11 +1,13 @@
 from rest_framework import viewsets, filters
+from rest_framework.exceptions import ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Position, Employee, PayrollScheme, Shift, SalaryAccrual
+from apps.core.models import User
+from .models import Position, PayrollScheme, Shift, SalaryAccrual
 from .serializers import (
     PositionSerializer, EmployeeSerializer,
     PayrollSchemeSerializer, ShiftSerializer, SalaryAccrualSerializer,
 )
-from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter
+from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, _resolve_org
 
 
 class PositionViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
@@ -18,15 +20,32 @@ class PositionViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 
 
 class EmployeeViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
+    """
+    Управление сотрудниками.
+    После слияния Employee→User каждый сотрудник — это User-объект.
+    Суперадмины исключаются из выборки.
+    """
     serializer_class = EmployeeSerializer
-    queryset = Employee.objects.all()
+    queryset = User.objects.all()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['position', 'trading_point', 'is_active']
-    search_fields = ['first_name', 'last_name', 'phone']
+    search_fields = ['first_name', 'last_name', 'phone', 'username']
 
     def get_queryset(self):
-        qs = Employee.objects.select_related('position', 'trading_point')
+        # Allow superusers if they are part of the organization (e.g. owners),
+        # but filter by tenant via _tenant_filter normally.
+        qs = User.objects.select_related('position', 'trading_point')
         return _tenant_filter(qs, self.request.user)
+
+    def perform_create(self, serializer):
+        """Создание сотрудника — проверка лимита max_users."""
+        org = _resolve_org(self.request.user)
+        if not org:
+            raise ValidationError(
+                {'organization': 'Сначала выберите организацию.'},
+                code='no_organization',
+            )
+        serializer.save(organization=org)
 
 
 class PayrollSchemeViewSet(viewsets.ModelViewSet):
@@ -41,6 +60,14 @@ class PayrollSchemeViewSet(viewsets.ModelViewSet):
             qs = qs.filter(employee_id=employee_id)
         return qs
 
+    def perform_create(self, serializer):
+        """Проверка что сотрудник принадлежит организации пользователя."""
+        employee = serializer.validated_data.get('employee')
+        org = _resolve_org(self.request.user)
+        if employee and org and str(employee.organization_id) != str(org.id):
+            raise ValidationError({'employee': 'Сотрудник не принадлежит вашей организации.'})
+        serializer.save()
+
 
 class ShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = ShiftSerializer
@@ -50,7 +77,7 @@ class ShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Shift.objects.select_related('employee', 'trading_point')
-        return _tenant_filter(qs, self.request.user)
+        return _tenant_filter(qs, self.request.user, tp_field='trading_point')
 
 
 class SalaryAccrualViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):

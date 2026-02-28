@@ -15,6 +15,7 @@ import {
   Tooltip, ResponsiveContainer, Area, AreaChart, Legend,
 } from 'recharts'
 import api from '../api'
+import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 
 interface DashboardKPI {
@@ -121,6 +122,7 @@ function KPICard({ icon, label, value, color, loading }: KPICardProps) {
 export default function DashboardPage() {
   const theme = useTheme()
   const { notify } = useNotification()
+  const { user } = useAuth()
 
   const [loading, setLoading] = useState(true)
   const [kpi, setKpi] = useState<DashboardKPI | null>(null)
@@ -133,25 +135,31 @@ export default function DashboardPage() {
     const load = async () => {
       try {
         const [kpiRes, dailyRes, ordersRes, stockRes, walletsRes] = await Promise.all([
-          api.get('/analytics/daily-summary/dashboard/'),
-          api.get('/analytics/daily-summary/?ordering=-date'),
-          api.get('/sales/orders/?status=new'),
-          api.get('/inventory/stock/'),
-          api.get('/finance/wallets/summary/'),
+          api.get('/analytics/daily-summary/dashboard/').catch(() => null),
+          api.get('/analytics/daily-summary/?ordering=-date').catch(() => null),
+          api.get('/sales/orders/?status=new').catch(() => null),
+          api.get('/inventory/stock/').catch(() => null),
+          api.get('/finance/wallets/summary/').catch(() => null),
         ])
 
-        setKpi(kpiRes.data)
-        setWalletBalance(walletsRes.data?.total_balance ?? 0)
+        if (kpiRes) setKpi(kpiRes.data)
+        if (walletsRes) setWalletBalance(walletsRes.data?.total_balance ?? 0)
 
-        const dailyList: DailySummary[] = dailyRes.data.results || dailyRes.data
-        setDaily(dailyList.slice(0, 7).reverse())
+        if (dailyRes) {
+          const dailyList: DailySummary[] = dailyRes.data.results || dailyRes.data
+          setDaily(dailyList.slice(0, 7).reverse())
+        }
 
-        const ordersList: Order[] = ordersRes.data.results || ordersRes.data
-        setNewOrders(ordersList.slice(0, 5))
+        if (ordersRes) {
+          const ordersList: Order[] = ordersRes.data.results || ordersRes.data
+          setNewOrders(ordersList.slice(0, 5))
+        }
 
-        const stockList: StockItem[] = stockRes.data.results || stockRes.data
-        const sorted = [...stockList].sort((a, b) => a.quantity - b.quantity)
-        setLowStock(sorted.slice(0, 5))
+        if (stockRes) {
+          const stockList: StockItem[] = stockRes.data.results || stockRes.data
+          const sorted = [...stockList].sort((a, b) => a.quantity - b.quantity)
+          setLowStock(sorted.slice(0, 5))
+        }
       } catch {
         notify('Ошибка загрузки данных дашборда', 'error')
       } finally {
@@ -159,7 +167,7 @@ export default function DashboardPage() {
       }
     }
     load()
-  }, [notify])
+  }, [notify, user?.active_trading_point])
 
   const kpiCards = [
     { label: 'Выручка сегодня', value: fmtCur(kpi?.today_revenue ?? 0), color: '#2e7d32', icon: <TrendingUpIcon /> },

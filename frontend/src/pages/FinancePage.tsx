@@ -8,6 +8,7 @@ import {
   Add, Edit, Delete, AccountBalanceWallet, SwapHoriz, Category, Receipt,
 } from '@mui/icons-material'
 import api from '../api'
+import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 import extractError from '../utils/extractError'
 import DataTable from '../components/DataTable'
@@ -85,6 +86,7 @@ const defaultDebtForm = () => ({ debt_type: 'supplier', direction: 'we_owe', cou
 
 export default function FinancePage() {
   const { notify } = useNotification()
+  const { user } = useAuth()
   const [tab, setTab] = useState(0)
   const [tradingPoints, setTradingPoints] = useState<TradingPoint[]>([])
 
@@ -111,13 +113,13 @@ export default function FinancePage() {
       .then(r => setWallets(r.data.results || r.data || []))
       .catch((err) => notify(extractError(err, 'Ошибка загрузки кошельков'), 'error'))
       .finally(() => setWalletLoad(false))
-  }, [walletSearch, notify])
+  }, [walletSearch, notify, user?.active_trading_point])
 
   const fetchSummary = useCallback(() => {
     api.get('/finance/wallets/summary/')
       .then(r => setSummary(r.data))
       .catch(() => {})
-  }, [])
+  }, [user?.active_trading_point])
 
   useEffect(() => { fetchWallets(); fetchSummary() }, [fetchWallets, fetchSummary])
 

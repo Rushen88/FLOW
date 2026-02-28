@@ -29,4 +29,4 @@ class DeliveryViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Delivery.objects.select_related('courier', 'zone', 'order')
-        return _tenant_filter(qs, self.request.user)
+        return _tenant_filter(qs, self.request.user, tp_field='order__trading_point')

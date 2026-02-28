@@ -11,6 +11,7 @@ import {
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import api from '../api'
+import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 import DataTable from '../components/DataTable'
 
@@ -113,6 +114,7 @@ const C = {
 // ─── Component ───
 export default function AnalyticsPage() {
   const { notify } = useNotification()
+  const { user } = useAuth()
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [summaries, setSummaries] = useState<DailySummary[]>([])
   const [tradingPoints, setTradingPoints] = useState<TradingPoint[]>([])
@@ -136,7 +138,7 @@ export default function AnalyticsPage() {
       .then(res => setDashboard(res.data))
       .catch(() => notify('Ошибка загрузки дашборда', 'error'))
       .finally(() => setDashLoading(false))
-  }, [notify])
+  }, [notify, user?.active_trading_point])
 
   // ─── Daily summaries ───
   const loadSummaries = useCallback(() => {
@@ -149,7 +151,7 @@ export default function AnalyticsPage() {
       .then(res => setSummaries(res.data.results || res.data))
       .catch(() => notify('Ошибка загрузки аналитики', 'error'))
       .finally(() => setLoading(false))
-  }, [tpFilter, dateRange, notify])
+  }, [tpFilter, dateRange, notify, user?.active_trading_point])
 
   useEffect(() => { loadDashboard() }, [loadDashboard])
   useEffect(() => { loadSummaries() }, [loadSummaries])

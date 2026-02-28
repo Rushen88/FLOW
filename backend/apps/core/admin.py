@@ -8,10 +8,12 @@ class OrganizationAdmin(admin.ModelAdmin):
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ('username', 'email', 'role', 'organization', 'is_active')
-    list_filter = ('role', 'organization', 'is_active')
+    list_display = ('username', 'email', 'role', 'organization', 'position', 'trading_point', 'is_active')
+    list_filter = ('role', 'organization', 'position', 'trading_point', 'is_active')
     fieldsets = BaseUserAdmin.fieldsets + (
-        ('Доп. информация', {'fields': ('organization', 'role', 'patronymic', 'phone', 'avatar')}),
+        ('Организация и роль', {'fields': ('organization', 'role', 'active_organization', 'active_trading_point')}),
+        ('Сотрудник', {'fields': ('patronymic', 'phone', 'position', 'trading_point',
+                                   'hire_date', 'fire_date', 'avatar', 'notes')}),
     )
 
 @admin.register(TradingPoint)

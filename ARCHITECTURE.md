@@ -8,7 +8,7 @@
 - **Backend:** Django 5.2 + Django REST Framework 3.16
 - **Frontend:** React 19 + TypeScript 5.7 + Material UI 6.5
 - **База данных:** PostgreSQL (база `FLOW`)
-- **Аутентификация:** JWT (SimpleJWT) — access 12ч, refresh 7д
+- **Аутентификация:** JWT (SimpleJWT) — access 2ч, refresh 3д
 - **Сборка фронтенда:** Vite 6.4
 - **Графики:** Recharts 2.15
 
@@ -91,7 +91,7 @@ FLOW/
 | Модель | Описание | Ключевые поля |
 |--------|----------|---------------|
 | **Organization** | Организация (мультитенант) | name, inn, phone, email, is_active, subscription_plan, monthly_price, paid_until, max_users |
-| **User** | Пользователь (расш. AbstractUser) | organization → Organization, active_organization → Organization (суперадмин), role (owner/admin/manager/seller/courier/accountant), phone, avatar |
+| **User** | Пользователь + Сотрудник | organization → Organization, active_organization (SA), role (owner/admin/manager/seller/courier/accountant), phone, avatar, position → Position, trading_point (assigned), active_trading_point (session), hire_date, fire_date, notes |
 | **TradingPoint** | Торговая точка | organization → Organization, name, address, manager → User, work_schedule |
 | **Warehouse** | Склад | trading_point → TradingPoint, type (main/showcase/fridge/assembly/reserve), is_default, is_default_for_sales |
 | **PaymentMethod** | Способ оплаты | organization → Organization, name, is_cash, commission_percent, wallet → Wallet |
@@ -184,14 +184,13 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
 | Модель | Описание | Ключевые поля |
 |--------|----------|---------------|
 | **Position** | Должность | organization → Organization, name, base_salary |
-| **Employee** | Сотрудник | user → User (1:1), position → Position, trading_point → TradingPoint, hire_date, fire_date |
-| **PayrollScheme** | Схема оплаты | employee → Employee, type (fixed/hourly/shift/percent_sales/mixed), rate, percent |
-| **Shift** | Смена | employee → Employee, trading_point, date, start_time, end_time, break_minutes |
-| **SalaryAccrual** | Начисление зарплаты | employee → Employee, period_start/end, base_amount, bonus, penalty, sales_bonus, total, status (pending/approved/paid), paid_from_wallet → Wallet |
+| **User** | Сотрудник | См. Core (объединённая модель) |
+| **PayrollScheme** | Схема оплаты | employee → User, type (fixed/hourly/shift/percent_sales/mixed), rate, percent |
+| **Shift** | Смена | employee → User, trading_point, date, start_time, end_time, break_minutes |
+| **SalaryAccrual** | Начисление зарплаты | employee → User, period_start/end, base_amount, bonus, penalty, sales_bonus, total, status (pending/approved/paid), paid_from_wallet → Wallet |
 
 **Связи:**
-- User ↔ Employee (1:1)
-- Employee → Position → Organization
+- User содержит поля сотрудника (position, hire_date и т.д.)
 - SalaryAccrual → Wallet (из какого кошелька выплачена)
 
 ### 3.8 Финансы (finance)
@@ -200,7 +199,7 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
 |--------|----------|---------------|
 | **Wallet** | Кошелёк | organization → Organization, name, wallet_type (cash/bank_account/card/electronic/personal_card/other), balance, allow_negative, owner → User |
 | **TransactionCategory** | Категория операции | name, direction (income/expense), parent → self |
-| **Transaction** | Финансовая операция | organization, transaction_type (income/expense/transfer/supplier_payment/salary/personal_expense), amount, wallet_from → Wallet, wallet_to → Wallet, category → TransactionCategory, sale → Sale, order → Order, employee → Employee, description |
+| **Transaction** | Финансовая операция | organization, transaction_type (income/expense/transfer/supplier_payment/salary/personal_expense), amount, wallet_from → Wallet, wallet_to → Wallet, category → TransactionCategory, sale → Sale, order → Order, employee → User, description |
 | **Debt** | Долг | organization, debt_type (supplier/employee/customer/other), direction (we_owe/owed_to_us), original_amount, paid_amount, remaining (вычислимое) |
 
 **Ключевые особенности (из ТЗ):**
@@ -314,7 +313,7 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
 - **ConfirmDialog.tsx** — диалог подтверждения удаления с кастомным текстом
 - **AuthContext.tsx** — контекст аутентификации: login, logout, fetchUser, **refreshUser**, интерфейс User с `is_superuser`, хранение токенов в localStorage
 - **NotificationContext.tsx** — глобальные toast-уведомления (notify(message, severity?)) через MUI Snackbar
-- **api.ts** — Axios-экземпляр с интерцепторами: автоматическая подстановка Authorization заголовка, рефреш access-токена при 401
+- **api.ts** — Axios-экземпляр с интерцепторами: автоматическая подстановка Authorization заголовка, рефреш access-токена при 401, event-based logout (`auth:logout` CustomEvent) вместо жёсткого редиректа
 
 ### Тема (MUI)
 
@@ -328,10 +327,11 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
 ## 6. Аутентификация и авторизация
 
 ### JWT (SimpleJWT)
-- Access-токен: время жизни 12 часов
-- Refresh-токен: время жизни 7 дней
+- Access-токен: время жизни 2 часа
+- Refresh-токен: время жизни 3 дня
 - Ротация refresh-токенов включена
 - Токены хранятся в localStorage
+- Throttling: 30 req/min (анонимные), 300 req/min (авторизованные)
 
 ### Роли пользователей
 | Роль | Код | Описание |
@@ -344,20 +344,33 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
 | Бухгалтер | `accountant` | Финансовые операции и отчёты |
 
 ### Мультитенантность
-Все данные изолированы по `Organization`. Каждый пользователь привязан к одной организации. API автоматически фильтрует данные по организации текущего пользователя.
+Все данные изолированы по `Organization` и опционально по `TradingPoint`. Каждый пользователь привязан к одной организации. API автоматически фильтрует данные по организации и торговой точке текущего пользователя.
+
+**Двухуровневая система контекста:**
+1. **Организация** — базовая изоляция, всегда активна
+2. **Торговая точка** — дополнительная фильтрация, активируется выбором в UI
 
 **Защита данных (core/mixins.py):**
 
-#### Тенант-фильтрация: `_tenant_filter(qs, user, org_field='organization')`
+#### Тенант-фильтрация: `_tenant_filter(qs, user, org_field='organization', tp_field=None)`
 Центральная функция изоляции данных, применённая во **всех 30+ ViewSet-ах**:
 - Если пользователь привязан к организации → `qs.filter(**{org_field: user.organization})`
-- Если суперпользователь (is_superuser=True) → `qs.all()` (видит все организации)
+- Если суперпользователь (is_superuser=True) с active_organization → фильтрация по выбранной организации
+- Если суперпользователь без выбора → `qs.all()` (видит все организации)
+- Если указан `tp_field` и активна торговая точка (`_resolve_tp()`) → дополнительный фильтр `qs.filter(**{tp_field: active_tp})`
 - Иначе (не суперпользователь без организации) → `qs.none()` (данные не утекут)
+
+#### Резолвер торговой точки: `_resolve_tp(user)`
+Определяет «рабочую» торговую точку пользователя по приоритету:
+1. `user.active_trading_point` — явно выбранная через UI (SA, owner, admin)
+2. `user.employee_profile.trading_point` — привязка сотрудника
+3. `None` — нет фильтрации по TP (показываются все данные текущей организации)
 
 Поддержка вложенных моделей через `org_field`: для SaleItem → `org_field='sale__organization'`, для OrderItem → `org_field='order__organization'` и т.д.
 
-#### Авто-назначение организации: `OrgPerformCreateMixin`
+#### Авто-назначение организации и торговой точки: `OrgPerformCreateMixin`
 - Автоматически устанавливает `organization` из `request.user.organization` при создании (POST) и обновлении (PATCH/PUT)
+- Автоматически устанавливает `trading_point` из `_resolve_tp(request.user)` если модель имеет такое поле
 - Внутренний хелпер `_resolve_org(request)` — для суперпользователя берёт org из тела запроса (если передана), иначе из user
 - Применён ко всем ViewSet-ам, чья модель имеет поле `organization` (26+ ViewSet-ов)
 - Все сериализаторы с полем `organization` имеют `read_only_fields = ['organization']` — невозможно подменить организацию через API
@@ -457,7 +470,8 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
 - `DATETIME_FORMAT = 'iso-8601'` — ISO-формат дат в API (совместимость с HTML5 date-input)
 - `DATE_FORMAT = 'iso-8601'` — ISO-формат дат
 - `DATE_INPUT_FORMATS` — принимает ISO-8601 и `dd.mm.yyyy`
-- `CORS_ALLOW_ALL_ORIGINS = True` — для разработки
+- `CORS_ALLOWED_ORIGINS` — из переменной окружения `CORS_ALLOWED_ORIGINS` (по умолчанию: localhost:3000, 5173, 8000)
+- `DEFAULT_THROTTLE_RATES`: `anon: 30/min`, `user: 300/min`
 - `TIME_ZONE = 'Europe/Moscow'`
 - `LANGUAGE_CODE = 'ru-ru'`
 
@@ -524,19 +538,50 @@ npm run dev                       # → http://localhost:3000
 - ✅ Авто-привязка пользователя к организации при создании (perform_create + refreshUser)
 - ✅ Общие компоненты (DataTable, EntityFormDialog, ConfirmDialog, NotificationContext)
 - ✅ Фронтенд не передаёт organization в POST/PATCH — бэкенд назначает автоматически
+- ✅ FIFO-списание при продажах (Sale → FIFO write-off при completed + is_paid)
+- ✅ Безопасная генерация номеров чеков (Max + select_for_update вместо count)
+- ✅ Финансовые транзакции с select_for_update и проверкой allow_negative
+- ✅ Откат баланса кошельков при обновлении/удалении транзакций
+- ✅ Cross-tenant валидация FK в inventory (BatchViewSet, write-off, transfer, assemble, disassemble, correct)
+- ✅ @transaction.atomic на correct-bouquet endpoint
+- ✅ Tenant isolation для ImportantDateViewSet, CustomerAddressViewSet (perform_create)
+- ✅ Tenant isolation для PayrollSchemeViewSet (perform_create)
+- ✅ Atomic Employee+User creation (transaction.atomic в EmployeeSerializer.create)
+- ✅ EmployeeSerializer: auto-generate username (`emp_XXXXXXXX`) если не указан
+- ✅ EmployeeSerializer: валидация уникальности username
+- ✅ MeasureUnitViewSet — добавлен IsAuthenticated
+- ✅ Role-based навигация в Layout (allowedRoles per nav item)
+- ✅ Убраны демо-креденшалы со страницы логина
+
+- ✅ Двухуровневый контекст: Organization + TradingPoint (фильтрация + авто-назначение)
+- ✅ `_resolve_tp(user)` — резолвер торговой точки с приоритетами (active_tp → employee.tp → None)
+- ✅ Все ViewSet-ы поддерживают `tp_field` для фильтрации по торговой точке
+- ✅ Все фронтенд-страницы автоматически обновляют данные при смене торговой точки
+- ✅ `api.ts` — event-based logout (CustomEvent) вместо `window.location.href`
+- ✅ BouquetTemplate.organization FK + data migration
+- ✅ MeasureUnit — запись ограничена IsPlatformAdmin
+- ✅ BouquetComponent, SupplierNomenclature — cross-tenant валидация FK при записи
+- ✅ Throttling: 30/min (анонимные), 300/min (авторизованные)
+- ✅ JWT: access 2ч (было 12ч), refresh 3д (было 7д)
+- ✅ CORS: `CORS_ALLOWED_ORIGINS` из env var (было `CORS_ALLOW_ALL = True`)
+- ✅ Пароли: добавлены CommonPasswordValidator + NumericPasswordValidator
+- ✅ EmployeeSerializer: проверка max_users перед созданием User
+- ✅ correct_bouquet: FIFO-списание вместо прямого StockMovement
+- ✅ Sale number: Cast to Integer + Max (исправлен баг строковой сортировки)
 
 ### Рекомендации по развитию
 - ✅ ~~Расширить RBAC на все ViewSet-ы~~ — **Исправлено**: ReadOnlyOrManager на sales, finance (transactions, debts), IsOwnerOrAdmin на wallets
-- ✅ ~~Бизнес-логика Transaction → автоматическое обновление Wallet.balance~~ — **Исправлено**: TransactionViewSet.perform_create() обновляет balance через F()
-- ✅ ~~Автонумерация продаж~~ — **Исправлено**: SaleSerializer.create() генерирует номер чека
+- ✅ ~~Бизнес-логика Transaction → автоматическое обновление Wallet.balance~~ — **Исправлено**: TransactionViewSet.perform_create/update/destroy обновляет balance через F() + select_for_update
+- ✅ ~~Автонумерация продаж~~ — **Исправлено**: SaleSerializer.create() генерирует номер чека через Max + select_for_update
 - ✅ ~~SaleSerializer items read_only~~ — **Исправлено**: добавлен items_data (writable) для вложенного создания/обновления позиций
 - ✅ ~~Analytics dashboard request.user.organization~~ — **Исправлено**: используется _resolve_org()
 - ✅ ~~max_users не проверяется~~ — **Исправлено**: UserViewSet.perform_create() проверяет лимит
-- 🔲 Бизнес-логика Sale.complete() → FIFO-списание, начисление бонусов клиенту
+- ✅ ~~Бизнес-логика Sale.complete() → FIFO-списание~~ — **Исправлено**: FIFO-списание при status=completed + is_paid
+- ✅ ~~BatchViewSet.create(): проверка cross-tenant владения объектами~~ — **Исправлено**: _validate_org_fk() во всех inventory actions
 - 🔲 Бизнес-логика Order: валидация переходов статусов, автоматический OrderStatusHistory
-- 🔲 BatchViewSet.create(): проверка cross-tenant владения объектами (warehouse, nomenclature, supplier)
 - 🔲 NomenclatureGroupSerializer: ограничение глубины рекурсии
-- 🔲 Пагинация на фронтенде (серверная пагинация вместо загрузки всех записей)
+- 🔲 PromoCode: атомарный инкремент used_count через F() при применении
+- 🔲 Начисление бонусов клиенту при продаже (LoyaltyProgram)
 - 🔲 N+1 query оптимизация (select_related/prefetch_related во всех ViewSet-ах)
 - 🔲 Code-splitting (dynamic import) для уменьшения размера бандла (~1.2MB)
 - 🔲 Вынести SECRET_KEY, DB-пароль и другие secrets в переменные окружения (django-environ)
@@ -555,6 +600,129 @@ npm run dev                       # → http://localhost:3000
 - 🔲 Автоматические отчёты и email-рассылки
 ---
 
+## Changelog (2026-03-04) — Исправление создания сотрудников, форма редактирования
+
+### Критическое исправление: создание сотрудников
+- **Корневая причина**: `AbstractUser.username` — обязательное поле в Django. DRF автоматически делало его `required=True` в EmployeeSerializer. Если фронтенд не передавал username при создании сотрудника, API возвращало `{"username":["Обязательное поле."]}` и сотрудник НЕ создавался.
+- **staff/serializers.py**: `EmployeeSerializer` — `username` теперь `required=False, allow_blank=True`. Если при создании username не указан, автоматически генерируется формата `emp_XXXXXXXX` (8 символов hex). Добавлена валидация уникальности username. При обновлении пустой username игнорируется (сохраняется текущий). Пароль хешируется через `set_password()`.
+- **staff/views.py**: `EmployeeViewSet.get_queryset()` — убран фильтр `is_superuser=False`, чтобы не скрывать суперпользователей-сотрудников.
+
+### Форма редактирования сотрудника (Frontend)
+- **StaffPage.tsx**: Форма разделена на 3 секции с `<Divider>`:
+  1. **Личные данные**: Фамилия, Имя, Отчество, Телефон, Email
+  2. **Работа**: Должность, Торговая точка, Дата найма, Дата увольнения, Активен
+  3. **Доступ в систему** (VpnKey icon): Логин (необязательно, автогенерация), Пароль (необязательно), Роль
+- Поле «Роль» вынесено в секцию «Доступ в систему» (было дублировано в двух секциях)
+- Подсказки: для нового сотрудника — «Необязательно», для существующего с аккаунтом — «Текущий логин для входа» / «Оставьте пустым, если не меняете»
+- `hire_date` больше не помечено как `required` (модель допускает null)
+
+---
+
+## Changelog (2026-03-03) — Системный аудит: TP-контекст, безопасность, целостность данных
+
+### Двухуровневый контекст фильтрации (Organization + Trading Point)
+
+**Backend (core/mixins.py):**
+- Добавлена функция `_resolve_tp(user)` — резолвер «рабочей» ТТ пользователя (приоритет: active_trading_point → employee.trading_point → None)
+- `_tenant_filter()` расширена параметром `tp_field` — опциональная фильтрация по торговой точке поверх организации
+- `OrgPerformCreateMixin.perform_create()` — автоматически заполняет `trading_point` из `_resolve_tp()` если модель имеет такое FK-поле
+
+**Применение tp_field во ViewSet-ах:**
+| ViewSet | tp_field |
+|---------|----------|
+| SaleViewSet | `trading_point` |
+| OrderViewSet | `trading_point` |
+| WalletViewSet | `trading_point` |
+| DeliveryViewSet | `order__trading_point` |
+| ShiftViewSet | `trading_point` |
+| WarehouseViewSet | `trading_point` |
+| BatchViewSet | `warehouse__trading_point` |
+| StockBalanceViewSet | `warehouse__trading_point` |
+| DailySummaryViewSet | `trading_point` |
+| Dashboard endpoint | Динамические фильтры по Sale/Order trading_point |
+
+**Frontend — автообновление при смене TP:**
+- Все страницы (Dashboard, Sales, Orders, Inventory, Finance, Delivery, Staff, Customers, Analytics) добавляют `user?.active_trading_point` в зависимости `useCallback` для fetch-функций → данные автоматически перезагружаются при переключении ТТ
+- `AuthContext.tsx`: добавлен try/catch в `switchOrganization` и `switchTradingPoint`; слушатель `auth:logout` CustomEvent
+- `api.ts`: заменён `window.location.href = '/login'` на `window.dispatchEvent(new CustomEvent('auth:logout'))` для совместимости с React
+- `Layout.tsx`: обработка ошибок в handleOrgSwitch/handleTpSwitch
+- `InventoryPage.tsx`: `scopedWarehouses` теперь учитывает `active_trading_point` (не только employee.trading_point)
+
+### Исправления критических багов
+
+- **sales/serializers.py**: `_generate_sale_number()` — исправлен баг строкового сравнения номеров чеков: `Cast('number', IntegerField())` + `Max` вместо `Max('number')` по CharField
+- **staff/serializers.py**: `EmployeeSerializer.create()` — проверка `max_users` перед созданием User (ранее лимит не проверялся)
+- **inventory/views.py**: `correct_bouquet_action` — списание теперь через FIFO (`fifo_write_off` + `_update_stock_balance`) с обработкой `InsufficientStockError`
+- **nomenclature/models.py**: `BouquetTemplate` — добавлено поле `organization` (FK, nullable) + миграции 0004+0005 (data migration из nomenclature.organization)
+- **sales/serializers.py**: `_sync_transaction()` — добавлен `select_for_update()` на существующую транзакцию
+
+### Безопасность
+
+- **config/settings.py**: Throttling — `DEFAULT_THROTTLE_CLASSES` (AnonRateThrottle, UserRateThrottle), 30/min и 300/min
+- **config/settings.py**: JWT — ACCESS_TOKEN_LIFETIME: 12ч → 2ч, REFRESH_TOKEN_LIFETIME: 7д → 3д
+- **config/settings.py**: CORS — `CORS_ALLOWED_ORIGINS` из env var (ранее `CORS_ALLOW_ALL_ORIGINS = True`)
+- **config/settings.py**: Пароли — добавлены `CommonPasswordValidator` и `NumericPasswordValidator`
+- **nomenclature/views.py**: `MeasureUnitViewSet` — запись ограничена `IsPlatformAdmin` (ранее любой авторизованный)
+- **nomenclature/views.py**: `BouquetComponentViewSet` — добавлен `ReadOnlyOrManager` + cross-tenant валидация template
+- **suppliers/views.py**: `SupplierNomenclatureViewSet` — добавлены `perform_create/perform_update` с проверкой принадлежности supplier и nomenclature к организации
+
+---
+
+## Changelog (2026-03-02) — Исправления доступа и улучшения UX продаж
+
+### Критические исправления
+- **core/views.py**: `TradingPointViewSet`, `WarehouseViewSet`, `PaymentMethodViewSet` — READ-доступ открыт для всех аутентифицированных (раньше только owner/admin). Запись остаётся за owner/admin. Это исправляло: «Ошибка загрузки данных дашборда», «Ошибка загрузки остатков», «Server Error 500» на странице Продажи.
+- **finance/views.py**: `WalletViewSet` — summary и list доступны всем аутентифицированным (раньше только owner/admin), запись — owner/admin.
+- **DashboardPage.tsx**: Promise.all с `.catch(() => null)` на каждый запрос — дашборд загружается частично, если один из 5 API недоступен.
+
+### Торговая точка — user context
+- **core/models.py**: Добавлено поле `User.active_trading_point` (FK → TradingPoint, nullable) — «рабочая» торговая точка пользователя.
+- **core/views.py**: Новый endpoint `POST /api/core/users/me/set-active-tp/` — переключение торговой точки для SA и owner/admin.
+- **core/serializers.py**: `UserSerializer` дополнен полями `active_trading_point`, `active_trading_point_name`.
+- **AuthContext.tsx**: Добавлен `switchTradingPoint()`, интерфейс `User` расширен полями `active_trading_point`, `active_trading_point_name`.
+- **Layout.tsx**: Селектор торговой точки в AppBar для суперадмина и владельца/администратора. Переключение фильтрует данные по точке.
+
+### Продажи — улучшения
+- **SalesPage.tsx**: Остатки (`stock/summary/`) фильтруются по `active_trading_point` или торговой точке сотрудника.
+- **SalesPage.tsx**: Торговая точка по умолчанию: `active_trading_point` → `employee.trading_point` → единственная точка.
+- Скидка на всю продажу (поле `discount_percent` в Sale) — уже реализовано в модели и frontend, работает корректно.
+- Остаток и склад по каждой позиции — уже отображаются в форме под каждой строкой.
+
+---
+
+## Changelog (2026-03-01) — Системный аудит и исправления
+
+### Критические исправления безопасности
+- **finance/views.py**: `TransactionViewSet` — добавлены `perform_update` и `perform_destroy` с откатом баланса кошельков. `perform_create` теперь использует `select_for_update()` на кошельках и проверяет `allow_negative` перед списанием. Вынесена утилита `_apply_wallet_balance()`.
+- **sales/serializers.py**: Интегрировано FIFO-списание со склада при продаже (`_do_fifo_write_off`). Теперь при `status=completed` + `is_paid=True` — автоматически вызывается `fifo_write_off()` для каждой позиции с записью `cost_price`, `StockMovement`, обновлением `StockBalance`.
+- **sales/serializers.py**: Исправлена гонка номеров чеков — вместо `Sale.objects.count()` используется `Max('number')` + `select_for_update()`.
+- **inventory/views.py**: `correct_bouquet_action` обёрнут в `@db_transaction.atomic` (раньше `select_for_update` вызывался без транзакции).
+- **inventory/views.py**: Добавлена cross-tenant валидация (`_validate_org_fk`) во все actions: BatchViewSet.create, write-off, transfer, assemble-bouquet, disassemble-bouquet, correct-bouquet.
+
+### Исправления тенантной изоляции
+- **customers/views.py**: `ImportantDateViewSet` и `CustomerAddressViewSet` — добавлен `perform_create` с проверкой принадлежности клиента организации.
+- **staff/views.py**: `PayrollSchemeViewSet` — добавлен `perform_create` с проверкой принадлежности сотрудника организации.
+- **nomenclature/views.py**: `MeasureUnitViewSet` — добавлен `permission_classes = [IsAuthenticated]` (раньше был полностью открытый).
+- **finance/views.py**: `WalletViewSet.get_queryset` — добавлен `select_related` для оптимизации.
+
+### Исправления целостности данных
+- **staff/serializers.py**: `EmployeeSerializer.create()` обёрнут в `@db_transaction.atomic` — создание Employee + User теперь атомарно.
+- **sales/serializers.py**: `_sync_transaction()` — все обновления `Wallet.balance` теперь через `select_for_update()`.
+- **finance/views.py**: `TransactionViewSet.perform_create` — валидация принадлежности `wallet_from` и `wallet_to` организации пользователя.
+
+### Frontend
+- **Layout.tsx**: Добавлена role-based фильтрация навигации (`allowedRoles` per nav item). Продавцы не видят Финансы/Персонал/Маркетинг; курьеры видят только Дашборд/Продажи/Заказы/Доставка.
+- **LoginPage.tsx**: Убраны демо-креденшалы (`Демо: admin / admin123`) со страницы входа.
+
+## Changelog (2026-02-28)
+
+### Блок Продаж (Sales)
+- **Фильтрация и Автокомплит**: Поле выбора номенклатуры переведено на Autocomplete с возможностью текстового поиска.
+- **Многоуровневый фильтр остатков**: При добавлении позиций отображаются только товары, имеющиеся на складах текущей торговой точки пользователя. 
+- **Удобство продавца**: По умолчанию подставляется текущая точка и текущий продавец-пользователь.
+- **Отображение состава букета**: При выборе букета в списке продажи автоматически отображается его состав мелким шрифтом.
+- **Багфикс позиций**: Исправлена проблема сохранения добавленных к продаже позиций (добавлена успешная автоматическая миграция колонки discount_percent, улучшена логика валидации). 
+
 ## Changelog (2026-02-27)
 
 ### Backend
@@ -566,8 +734,71 @@ npm run dev                       # → http://localhost:3000
 - **Миграция**: `0002_bouquettemplate_bouquet_name` — добавление поля `bouquet_name`.
 
 ### Frontend
-- **SalesPage**: Полностью переписана. Autocomplete для номенклатуры с отображением остатков. Поле продавца (по умолчанию — текущий пользователь). Глобальная скидка %. Статус по умолчанию «Завершена». Switch «Оплачено». Состав букета в деталях с Collapse. Ключ `items_data` для API.
+- **SalesPage**: Полностью переписана. Autocomplete для номенклатуры с отображением остатков и фильтрацией только по позициям с фактическим остатком в торговой точке сотрудника. Добавлен выбор склада по позиции с автоподбором (приоритет склада «по умолчанию для продаж», иначе склад с меньшим остатком). Поле продавца и торговой точки по умолчанию заполняются из профиля текущего пользователя. Глобальная скидка %. Статус по умолчанию «Завершена». Switch «Оплачено». Ключ `items_data` для API.
 - **SettingsPage**: Удалена вкладка «Пользователи» (перенесена в Персонал). Добавлен выбор кошелька для способа оплаты. Добавлен переключатель `is_default_for_sales` для складов.
 - **StaffPage**: Добавлены поля учётной записи (логин/пароль/роль) при создании сотрудника. Отображение логина и роли в таблице.
 - **NomenclaturePage**: Поле `bouquet_name` в форме шаблона букета. Удалены поля `season_start`/`season_end` из формы номенклатуры.
-- **InventoryPage**: Вкладка «Партии» переименована в «Поступления». Индивидуальная сборка букета (ручной выбор компонентов при отсутствии шаблона).
+- **InventoryPage**: Вкладка «Партии» переименована в «Поступления». Сборка букета расширена: индивидуальная сборка, редактируемый состав шаблона в момент сборки, выбор склада списания по каждому компоненту, подсветка нехватки, поле сборщика, флаг «добавить в шаблоны». Раскомплектовка обновлена: поле «Возврат» автоматически рассчитывается от значения «Списание». Из остатков добавлены быстрые действия: «Продать» и «Коррекция букета».
+
+- **Inventory API**: `/inventory/stock/summary/` теперь учитывает торговую точку сотрудника по умолчанию и возвращает расширенный состав складов по позиции (`is_default_for_sales`, `trading_point`, `total_quantity`). `assemble-bouquet` поддерживает сборщика, компонентные склады и сохранение состава в шаблон. Добавлен endpoint `correct-bouquet` для коррекции состава букета в остатках.
+- **Finance / Sales API**: В SaleSerializer добавлена автогенерируемая транзакция: при оплате чека (is_paid=True и status=completed), автоматически зачисляются средства на кошелёк, привязанный к выбранному PaymentMethod. При отмене чека транзакция откатывается.
+
+---
+
+## Changelog (2025-01-15) — Архитектурный Аудит
+
+### Backend
+- **sales/serializers.py**: Добавлен метод `_update_customer_stats(sale, delta_total, delta_count)` — обновляет поля `Customer.total_purchases` и `purchases_count` при завершении/отмене продажи через атомарные F()-выражения.
+- **sales/serializers.py**: `create()` и `update()` вызывают `_update_customer_stats` при переходах статуса (completed ↔ не-completed).
+
+### Frontend
+- **shared/types.ts**: Создан модуль общих TypeScript-типов (~280 строк): `Organization`, `User`, `Nomenclature`, `Sale`, `SaleItem`, `Customer`, `Wallet`, `Transaction`, `Delivery`, `Batch`, `Movement` и др.
+- **shared/formatters.ts**: Создан модуль форматирования: `fmtNum`, `fmtCurrency`, `fmtPercent`, `fmtDate`, `fmtDateTime`, `fmtTime`, `fmtPhone`, `truncate`, `pluralize`.
+- **shared/constants.ts**: Создан модуль констант: `USER_ROLES`, `SALE_STATUSES`, `ORDER_STATUSES`, `DELIVERY_STATUSES`, `MOVEMENT_TYPES`, `NOMENCLATURE_TYPES`, `WAREHOUSE_TYPES`, `WALLET_TYPES`, `TRANSACTION_TYPES`, `WRITEOFF_REASONS`, `AD_CHANNEL_TYPES`.
+- **shared/index.ts**: Barrel-экспорт всех модулей через `@/shared`.
+
+### Cleanup
+- Удалены устаревшие файлы: `AUDIT_REPORT.md`, `AUDIT_REPORT_DETAILED.md`, `FRONTEND_AUDIT.md`, `FRONTEND_AUDIT_DEEP.md`, `BACKEND_AUDIT_REPORT.md`, `FRONTEND_ARCHITECTURE_AUDIT.md`.
+- Удалены мусорные файлы: `update.tar.gz`, `~$FLOW.docx`, `deployment_patch.py`, `deploy_full.py`, `ssh_cmd.py`, `SalesPage.tsx.bak`.
+
+---
+
+## Tech Debt / Known Issues
+
+Результаты архитектурного аудита (оценка готовности к production: ~60%).
+
+### Критические проблемы (требуют решения)
+
+| # | Проблема | Локация | Приоритет |
+|---|----------|---------|-----------|
+| 1 | ~~Customer.total_purchases не обновлялся~~ | sales/serializers.py | ✅ FIXED |
+| 2 | Возможные race conditions при генерации номеров (sale/order) | sales/serializers.py | HIGH |
+| 3 | Бизнес-логика в сериализаторах вместо services | sales, inventory | MEDIUM |
+| 4 | Нет audit-лога изменений (кто, что, когда) | Все приложения | MEDIUM |
+| 5 | Нет системы уведомлений (email/push) | Проект | MEDIUM |
+
+### Архитектурные улучшения (roadmap)
+
+| Область | Текущее состояние | Рекомендация |
+|---------|-------------------|--------------|
+| **Frontend — типы** | Дублирование интерфейсов | ~~Создать shared/types.ts~~ ✅ |
+| **Frontend — форматтеры** | Дублирование функций | ~~Создать shared/formatters.ts~~ ✅ |
+| **Frontend — константы** | Хардкод в компонентах | ~~Создать shared/constants.ts~~ ✅ |
+| **Frontend — God Components** | SalesPage ~1000+ строк | Разбить на hooks + sub-components |
+| **Frontend — Code Splitting** | Всё в одном bundle | React.lazy() + Suspense |
+| **Backend — services layer** | Логика в serializers | Выделить business logic в services/ |
+| **Backend — audit log** | Отсутствует | django-auditlog или custom middleware |
+| **Backend — notifications** | Отсутствует | Celery + email/telegram |
+| **Testing** | Нет тестов | pytest + coverage target 70% |
+
+### API Endpoints — потенциальные N+1
+
+- `GET /api/sales/` — items с nomenclature требуют prefetch_related
+- `GET /api/inventory/batches/` — movements count per batch
+
+### Безопасность
+
+- ✅ SECRET_KEY использует `os.getenv()` (проверено)
+- ✅ JWT с ротацией токенов
+- ⚠️ Rate limiting рекомендуется (django-ratelimit)
+- ⚠️ CORS origins в production должны быть ограничены

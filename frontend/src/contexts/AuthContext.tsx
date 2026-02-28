@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react'
 import api from '../api'
 
 interface User {
@@ -12,6 +12,15 @@ interface User {
   organization_name: string
   active_organization: string | null
   active_organization_name: string
+  active_trading_point: string | null
+  active_trading_point_name: string
+  trading_point: string | null
+  trading_point_name: string
+  position: string | null
+  position_name: string
+  hire_date: string | null
+  fire_date: string | null
+  notes: string
   full_name: string
   is_active: boolean
   is_superuser: boolean
@@ -28,6 +37,7 @@ interface AuthContextType {
   logout: () => void
   refreshUser: () => Promise<void>
   switchOrganization: (orgId: string | null) => Promise<void>
+  switchTradingPoint: (tpId: string | null) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -63,17 +73,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await fetchUser()
   }
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     setUser(null)
-  }
+  }, [])
+
+  // Listen for forced logout from api interceptor
+  useEffect(() => {
+    const handler = () => logout()
+    window.addEventListener('auth:logout', handler)
+    return () => window.removeEventListener('auth:logout', handler)
+  }, [logout])
 
   const switchOrganization = async (orgId: string | null) => {
-    const { data } = await api.post('/core/users/me/set-active-org/', {
-      organization: orgId,
-    })
-    setUser(data)
+    try {
+      const { data } = await api.post('/core/users/me/set-active-org/', {
+        organization: orgId,
+      })
+      setUser(data)
+    } catch (err) {
+      console.error('Failed to switch organization:', err)
+      throw err
+    }
+  }
+
+  const switchTradingPoint = async (tpId: string | null) => {
+    try {
+      const { data } = await api.post('/core/users/me/set-active-tp/', {
+        trading_point: tpId,
+      })
+      setUser(data)
+    } catch (err) {
+      console.error('Failed to switch trading point:', err)
+      throw err
+    }
   }
 
   return (
@@ -85,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       refreshUser: fetchUser,
       switchOrganization,
+      switchTradingPoint,
     }}>
       {children}
     </AuthContext.Provider>

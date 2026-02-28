@@ -6,6 +6,7 @@ import {
 import Grid from '@mui/material/Grid2'
 import { Add, Edit, Delete } from '@mui/icons-material'
 import api from '../api'
+import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 import extractError from '../utils/extractError'
 import DataTable from '../components/DataTable'
@@ -68,6 +69,7 @@ const defaultZoneForm = () => ({
 
 export default function DeliveryPage() {
   const { notify } = useNotification()
+  const { user } = useAuth()
   const [tab, setTab] = useState(0)
 
 
@@ -91,7 +93,7 @@ export default function DeliveryPage() {
       .then(r => setDeliveries(r.data.results || r.data || []))
       .catch((err) => notify(extractError(err, 'Ошибка загрузки доставок'), 'error'))
       .finally(() => setDelLoad(false))
-  }, [notify, fStatus, fCourier])
+  }, [notify, fStatus, fCourier, user?.active_trading_point])
 
   useEffect(() => { fetchDeliveries() }, [fetchDeliveries])
 

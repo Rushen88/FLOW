@@ -93,8 +93,6 @@ class Nomenclature(models.Model):
     image = models.ImageField('Фото', upload_to='nomenclature/', blank=True, null=True)
     color = models.CharField('Цвет', max_length=50, blank=True, default='')
     country = models.CharField('Страна', max_length=100, blank=True, default='')
-    season_start = models.PositiveSmallIntegerField('Начало сезона (месяц)', null=True, blank=True)
-    season_end = models.PositiveSmallIntegerField('Конец сезона (месяц)', null=True, blank=True)
     shelf_life_days = models.PositiveIntegerField('Срок годности (дней)', null=True, blank=True)
     min_stock = models.DecimalField(
         'Мин. остаток', max_digits=10, decimal_places=2, default=0,
@@ -116,6 +114,11 @@ class Nomenclature(models.Model):
 class BouquetTemplate(models.Model):
     """Шаблон букета / композиции — содержит рецептуру."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        'core.Organization', on_delete=models.CASCADE,
+        related_name='bouquet_templates', verbose_name='Организация',
+        null=True, blank=True,
+    )
     nomenclature = models.OneToOneField(
         Nomenclature, on_delete=models.CASCADE,
         related_name='bouquet_template', verbose_name='Номенклатура',

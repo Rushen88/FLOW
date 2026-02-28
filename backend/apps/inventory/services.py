@@ -112,6 +112,9 @@ def process_batch_receipt(
     Оприходование партии товара.
     Создаёт Batch + StockMovement(receipt) + обновляет StockBalance.
     """
+    if getattr(nomenclature, 'nomenclature_type', '') == 'service':
+        raise ValueError('Услуги нельзя проводить через поступления.')
+
     if arrival_date is None:
         arrival_date = timezone.now().date()
 
@@ -239,11 +242,11 @@ def assemble_bouquet(
     """
     Сборка букета.
 
-    components: [{'nomenclature': Nomenclature, 'quantity': Decimal}, ...]
+    components: [{'nomenclature': Nomenclature, 'quantity': Decimal, 'warehouse': Warehouse?}, ...]
        (количество PER ONE букет — если quantity > 1, будет умножено)
 
     Процесс:
-    1. FIFO-списание всех компонентов из warehouse_from
+    1. FIFO-списание компонентов (по каждому может быть указан свой склад)
     2. Создание StockMovement(assembly) для каждого компонента
     3. Оприходование букета на warehouse_to
     """
@@ -253,6 +256,7 @@ def assemble_bouquet(
     for comp in components:
         comp_nomenclature = comp['nomenclature']
         comp_qty = Decimal(str(comp['quantity'])) * bouquet_qty
+        comp_warehouse = comp.get('warehouse') or warehouse_from
 
         # Услуги не участвуют в складском учёте — пропускаем FIFO-списание
         if comp_nomenclature.nomenclature_type == 'service':
@@ -260,7 +264,7 @@ def assemble_bouquet(
 
         fifo_result = fifo_write_off(
             organization=organization,
-            warehouse=warehouse_from,
+            warehouse=comp_warehouse,
             nomenclature=comp_nomenclature,
             quantity=comp_qty,
             user=user,
@@ -271,7 +275,7 @@ def assemble_bouquet(
                 organization=organization,
                 nomenclature=comp_nomenclature,
                 movement_type=StockMovement.MovementType.ASSEMBLY,
-                warehouse_from=warehouse_from,
+                warehouse_from=comp_warehouse,
                 batch=r['batch'],
                 quantity=r['qty'],
                 price=r['price'],
@@ -280,18 +284,18 @@ def assemble_bouquet(
             )
 
         _update_stock_balance(
-            organization, warehouse_from, comp_nomenclature, -comp_qty
+            organization, comp_warehouse, comp_nomenclature, -comp_qty
         )
 
     # 2. Себестоимость букета — сумма себестоимости всех компонентов
     total_cost = Decimal('0')
     for comp in components:
         comp_nomenclature = comp['nomenclature']
-        comp_qty = Decimal(str(comp['quantity'])) * bouquet_qty
+        comp_warehouse = comp.get('warehouse') or warehouse_from
         # Подсчитаем стоимость по средней закупочной
         sb = StockBalance.objects.filter(
             organization=organization,
-            warehouse=warehouse_from,
+            warehouse=comp_warehouse,
             nomenclature=comp_nomenclature,
         ).first()
         avg_price = sb.avg_purchase_price if sb else comp_nomenclature.purchase_price

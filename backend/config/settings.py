@@ -94,7 +94,10 @@ DATABASES = {
 AUTH_USER_MODEL = 'core.User'
 
 AUTH_PASSWORD_VALIDATORS = [
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+     'OPTIONS': {'min_length': 8}},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
 # --------------- REST FRAMEWORK ---------------
@@ -117,16 +120,29 @@ REST_FRAMEWORK = {
     'DATE_FORMAT': 'iso-8601',
     'DATE_INPUT_FORMATS': ['iso-8601', '%d.%m.%Y'],
     'DATETIME_INPUT_FORMATS': ['iso-8601', '%d.%m.%Y %H:%M'],
+    # Защита от перебора: анонимные запросы ограничены жёстче
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '30/minute',
+        'user': '300/minute',
+    },
 }
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=12),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=3),
     'ROTATE_REFRESH_TOKENS': True,
 }
 
 # --------------- CORS ---------------
-CORS_ALLOW_ALL_ORIGINS = True  # dev only
+CORS_ALLOWED_ORIGINS = os.getenv(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173',
+).split(',')
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL', 'False') == 'True'  # только для dev
 
 # --------------- i18n / tz ---------------
 LANGUAGE_CODE = 'ru'

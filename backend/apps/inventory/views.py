@@ -1,4 +1,6 @@
 from decimal import Decimal
+from django.utils import timezone
+from django.db import transaction as db_transaction
 
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
@@ -12,9 +14,16 @@ from .serializers import (
 )
 from .services import (
     process_batch_receipt, assemble_bouquet, disassemble_bouquet,
-    write_off_stock, transfer_stock, InsufficientStockError,
+    write_off_stock, transfer_stock, InsufficientStockError, fifo_write_off, _update_stock_balance,
 )
 from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter
+
+
+def _validate_org_fk(obj, org, label='Объект'):
+    """Проверка что FK принадлежит организации текущего пользователя."""
+    if obj and hasattr(obj, 'organization_id') and str(obj.organization_id) != str(org.id):
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied(f'{label} не принадлежит вашей организации.')
 
 
 class BatchViewSet(viewsets.ModelViewSet):
@@ -32,7 +41,8 @@ class BatchViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Batch.objects.select_related('nomenclature', 'warehouse', 'supplier')
-        return _tenant_filter(qs, self.request.user)
+        qs = _tenant_filter(qs, self.request.user, tp_field='warehouse__trading_point')
+        return qs.exclude(nomenclature__nomenclature_type='service')
 
     def create(self, request, *args, **kwargs):
         """Создание партии через сервисный слой (с auto-receipt)."""
@@ -55,6 +65,18 @@ class BatchViewSet(viewsets.ModelViewSet):
             supplier = None
             if data.get('supplier'):
                 supplier = Supplier.objects.get(pk=data['supplier'])
+
+            if nomenclature.nomenclature_type == 'service':
+                return Response(
+                    {'nomenclature': ['Услуги нельзя проводить через поступления.']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Проверка принадлежности объектов организации
+            _validate_org_fk(nomenclature, org, 'Номенклатура')
+            _validate_org_fk(warehouse, org, 'Склад')
+            if supplier:
+                _validate_org_fk(supplier, org, 'Поставщик')
 
             batch = process_batch_receipt(
                 organization=org,
@@ -92,22 +114,41 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = StockBalance.objects.select_related('nomenclature', 'warehouse')
-        return _tenant_filter(qs, self.request.user)
+        qs = _tenant_filter(qs, self.request.user, tp_field='warehouse__trading_point')
+        return (
+            qs
+            .exclude(nomenclature__nomenclature_type='service')
+            .filter(quantity__gt=0)
+            .order_by('nomenclature__name')
+        )
 
     @action(detail=False, methods=['get'], url_path='summary')
     def summary(self, request):
         """
         Агрегированные остатки по номенклатуре (для продаж).
         Возвращает список {nomenclature, nomenclature_name, total_qty, warehouses: [{warehouse, warehouse_name, qty}]}
+        Учитывает active_trading_point пользователя.
         """
-        from apps.core.mixins import _resolve_org
-        from django.db.models import Sum
+        from apps.core.mixins import _resolve_org, _resolve_tp
         org = _resolve_org(request.user)
         if not org:
             return Response([])
+
+        # Определяем торговую точку
+        trading_point_id = request.query_params.get('trading_point')
+        if not trading_point_id:
+            tp = _resolve_tp(request.user)
+            if tp:
+                trading_point_id = str(tp.id)
+
         qs = StockBalance.objects.filter(
             organization=org, quantity__gt=0,
-        ).select_related('nomenclature', 'warehouse')
+        ).select_related('nomenclature', 'warehouse', 'warehouse__trading_point')
+        qs = qs.exclude(nomenclature__nomenclature_type='service')
+
+        if trading_point_id:
+            qs = qs.filter(warehouse__trading_point_id=trading_point_id)
+
         warehouse_id = request.query_params.get('warehouse')
         if warehouse_id:
             qs = qs.filter(warehouse_id=warehouse_id)
@@ -123,11 +164,18 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             groups[key]['warehouses'].append({
                 'warehouse': str(sb.warehouse_id),
                 'warehouse_name': sb.warehouse.name,
+                'trading_point': str(sb.warehouse.trading_point_id) if sb.warehouse.trading_point_id else '',
+                'is_default_for_sales': bool(getattr(sb.warehouse, 'is_default_for_sales', False)),
                 'qty': str(sb.quantity),
             })
-        result = [{'nomenclature': v['nomenclature'], 'nomenclature_name': v['nomenclature_name'],
-                    'total_qty': str(v['total_qty']), 'warehouses': v['warehouses']}
-                   for v in groups.values()]
+
+        result = [{
+            'nomenclature': v['nomenclature'],
+            'nomenclature_name': v['nomenclature_name'],
+            'total_qty': str(v['total_qty']),
+            'total_quantity': str(v['total_qty']),
+            'warehouses': v['warehouses'],
+        } for v in groups.values()]
         return Response(result)
 
 
@@ -156,6 +204,8 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         try:
             warehouse = Warehouse.objects.get(pk=data['warehouse'])
             nomenclature = Nomenclature.objects.get(pk=data['nomenclature'])
+            _validate_org_fk(warehouse, org, 'Склад')
+            _validate_org_fk(nomenclature, org, 'Номенклатура')
             result = write_off_stock(
                 organization=org,
                 warehouse=warehouse,
@@ -191,6 +241,9 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             wh_from = Warehouse.objects.get(pk=data['warehouse_from'])
             wh_to = Warehouse.objects.get(pk=data['warehouse_to'])
             nomenclature = Nomenclature.objects.get(pk=data['nomenclature'])
+            _validate_org_fk(wh_from, org, 'Склад-источник')
+            _validate_org_fk(wh_to, org, 'Склад-назначение')
+            _validate_org_fk(nomenclature, org, 'Номенклатура')
             batch = transfer_stock(
                 organization=org,
                 warehouse_from=wh_from,
@@ -214,7 +267,8 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         """
         Сборка букета.
         POST: {
-            nomenclature_bouquet: UUID,
+            nomenclature_bouquet: UUID | '',    — опционально; если пусто — создаётся новая номенклатура
+            bouquet_name: str,                  — обязательно для индивидуальной сборки (nomen_bouquet='')
             warehouse_from: UUID,
             warehouse_to: UUID,
             quantity: number (default 1),
@@ -222,19 +276,48 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             components: [{nomenclature: UUID, quantity: number}, ...] (if use_template=false)
         }
         """
-        from apps.nomenclature.models import Nomenclature, BouquetTemplate
+        from apps.nomenclature.models import Nomenclature, BouquetTemplate, BouquetComponent
+        from apps.core.models import User, Warehouse
         from apps.core.mixins import _resolve_org
 
         org = _resolve_org(request.user)
         data = request.data
         try:
-            bouquet_nom = Nomenclature.objects.get(pk=data['nomenclature_bouquet'])
-            from apps.core.models import Warehouse
             wh_from = Warehouse.objects.get(pk=data['warehouse_from'])
             wh_to = Warehouse.objects.get(pk=data['warehouse_to'])
             qty = int(data.get('quantity', 1))
 
-            use_template = data.get('use_template', True)
+            _validate_org_fk(wh_from, org, 'Склад-источник')
+            _validate_org_fk(wh_to, org, 'Склад-назначение')
+
+            bouquet_nom_id = data.get('nomenclature_bouquet') or ''
+            bouquet_name_input = (data.get('bouquet_name') or '').strip()
+            is_individual = False
+
+            if bouquet_nom_id:
+                bouquet_nom = Nomenclature.objects.get(pk=bouquet_nom_id)
+                _validate_org_fk(bouquet_nom, org, 'Букет')
+            elif bouquet_name_input:
+                # Индивидуальная сборка — создаём новую номенклатуру на лету
+                bouquet_nom = Nomenclature.objects.create(
+                    organization=org,
+                    name=bouquet_name_input,
+                    nomenclature_type='bouquet',
+                )
+                is_individual = True
+            else:
+                return Response(
+                    {'detail': 'Укажите шаблон букета или название индивидуального букета.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            assembler = request.user
+            assembler_id = data.get('assembler')
+            if assembler_id:
+                assembler = User.objects.filter(pk=assembler_id, organization=org).first() or request.user
+
+            # Для индивидуальной сборки use_template всегда False
+            use_template = (not is_individual) and data.get('use_template', True)
             if use_template:
                 # Загружаем компоненты из шаблона
                 try:
@@ -248,6 +331,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                     {
                         'nomenclature': comp.nomenclature,
                         'quantity': comp.quantity,
+                        'warehouse': wh_from,
                     }
                     for comp in template.components.select_related('nomenclature').all()
                 ]
@@ -256,10 +340,33 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 components = []
                 for c in data.get('components', []):
                     comp_nom = Nomenclature.objects.get(pk=c['nomenclature'])
+                    comp_wh = wh_from
+                    if c.get('warehouse'):
+                        comp_wh = Warehouse.objects.get(pk=c['warehouse'])
                     components.append({
                         'nomenclature': comp_nom,
                         'quantity': Decimal(str(c['quantity'])),
+                        'warehouse': comp_wh,
                     })
+
+            # Переопределение складов/количеств компонентов при сборке из шаблона
+            if use_template and data.get('components'):
+                overrides = {str(c.get('nomenclature')): c for c in data.get('components', []) if c.get('nomenclature')}
+                updated_components = []
+                for comp in components:
+                    override = overrides.get(str(comp['nomenclature'].id))
+                    if not override:
+                        updated_components.append(comp)
+                        continue
+                    comp_wh = comp.get('warehouse') or wh_from
+                    if override.get('warehouse'):
+                        comp_wh = Warehouse.objects.get(pk=override['warehouse'])
+                    updated_components.append({
+                        'nomenclature': comp['nomenclature'],
+                        'quantity': Decimal(str(override.get('quantity', comp['quantity']))),
+                        'warehouse': comp_wh,
+                    })
+                components = updated_components
 
             if not components:
                 return Response(
@@ -274,9 +381,35 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 warehouse_to=wh_to,
                 components=components,
                 quantity=qty,
-                user=request.user,
+                user=assembler,
                 notes=data.get('notes', ''),
             )
+
+            # Опционально сохранить/обновить шаблон составом текущей сборки
+            if data.get('add_to_templates'):
+                template, _ = BouquetTemplate.objects.get_or_create(
+                    nomenclature=bouquet_nom,
+                    defaults={
+                        'organization': org,
+                        'bouquet_name': data.get('bouquet_name') or '',
+                        'assembly_time_minutes': 15,
+                        'difficulty': 3,
+                        'description': '',
+                    },
+                )
+                if data.get('bouquet_name') is not None:
+                    template.bouquet_name = data.get('bouquet_name') or ''
+                    template.save(update_fields=['bouquet_name'])
+
+                template.components.all().delete()
+                for comp in components:
+                    BouquetComponent.objects.create(
+                        template=template,
+                        nomenclature=comp['nomenclature'],
+                        quantity=Decimal(str(comp['quantity'])),
+                        is_required=True,
+                    )
+
             return Response({
                 'status': 'ok',
                 'batch_id': str(batch.id),
@@ -300,7 +433,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         }
         """
         from apps.nomenclature.models import Nomenclature
-        from apps.core.models import Warehouse
+        from apps.core.models import Warehouse, User
         from apps.core.mixins import _resolve_org
 
         org = _resolve_org(request.user)
@@ -308,6 +441,14 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         try:
             bouquet_nom = Nomenclature.objects.get(pk=data['nomenclature_bouquet'])
             warehouse = Warehouse.objects.get(pk=data['warehouse'])
+
+            _validate_org_fk(bouquet_nom, org, 'Букет')
+            _validate_org_fk(warehouse, org, 'Склад')
+
+            assembler = request.user
+            assembler_id = data.get('assembler')
+            if assembler_id:
+                assembler = User.objects.filter(pk=assembler_id, organization=org).first() or request.user
 
             return_items = []
             for item in data.get('return_items', []):
@@ -332,12 +473,200 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 warehouse=warehouse,
                 return_items=return_items,
                 writeoff_items=writeoff_items,
-                user=request.user,
+                user=assembler,
                 notes=data.get('notes', ''),
             )
             return Response({
                 'status': 'ok',
                 'message': f'Букет "{bouquet_nom.name}" раскомплектован.',
+            })
+        except InsufficientStockError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], url_path='correct-bouquet')
+    @db_transaction.atomic
+    def correct_bouquet_action(self, request):
+        """
+        Коррекция состава букета в остатках.
+        POST: {
+            nomenclature_bouquet: UUID,
+            warehouse: UUID,
+            rows: [{
+                nomenclature: UUID,
+                writeoff_qty?: number,
+                return_qty?: number,
+                add_qty?: number,
+                reason?: str,
+                return_warehouse?: UUID,
+                add_warehouse?: UUID,
+            }]
+        }
+        """
+        from apps.nomenclature.models import Nomenclature
+        from apps.core.models import Warehouse
+        from apps.core.mixins import _resolve_org
+
+        org = _resolve_org(request.user)
+        data = request.data
+        try:
+            bouquet_nom = Nomenclature.objects.get(pk=data['nomenclature_bouquet'])
+            warehouse = Warehouse.objects.get(pk=data['warehouse'])
+
+            _validate_org_fk(bouquet_nom, org, 'Букет')
+            _validate_org_fk(warehouse, org, 'Склад')
+
+            # 1) списать 1 букет
+            fifo_result = fifo_write_off(
+                organization=org,
+                warehouse=warehouse,
+                nomenclature=bouquet_nom,
+                quantity=Decimal('1'),
+                user=request.user,
+            )
+            bouquet_cost = fifo_result[0]['price'] if fifo_result else bouquet_nom.purchase_price
+            for r in fifo_result:
+                StockMovement.objects.create(
+                    organization=org,
+                    nomenclature=bouquet_nom,
+                    movement_type=StockMovement.MovementType.WRITE_OFF,
+                    warehouse_from=warehouse,
+                    batch=r['batch'],
+                    quantity=r['qty'],
+                    price=r['price'],
+                    user=request.user,
+                    notes=f'Коррекция букета: {bouquet_nom.name}',
+                )
+            _update_stock_balance(org, warehouse, bouquet_nom, Decimal('-1'))
+
+            # 2) обработать строки коррекции
+            for row in data.get('rows', []):
+                nom = Nomenclature.objects.get(pk=row['nomenclature'])
+                if nom.nomenclature_type == 'service':
+                    continue
+                writeoff_qty = Decimal(str(row.get('writeoff_qty', 0) or 0))
+                return_qty = Decimal(str(row.get('return_qty', 0) or 0))
+                add_qty = Decimal(str(row.get('add_qty', 0) or 0))
+
+                if return_qty > 0 and nom.nomenclature_type != 'service':
+                    return_wh = warehouse
+                    if row.get('return_warehouse'):
+                        return_wh = Warehouse.objects.get(pk=row['return_warehouse'])
+                    batch = Batch.objects.create(
+                        organization=org,
+                        nomenclature=nom,
+                        warehouse=return_wh,
+                        purchase_price=nom.purchase_price,
+                        quantity=return_qty,
+                        remaining=return_qty,
+                        arrival_date=timezone.now().date(),
+                        notes=f'Возврат из коррекции: {bouquet_nom.name}',
+                    )
+                    StockMovement.objects.create(
+                        organization=org,
+                        nomenclature=nom,
+                        movement_type=StockMovement.MovementType.RETURN,
+                        warehouse_to=return_wh,
+                        batch=batch,
+                        quantity=return_qty,
+                        price=nom.purchase_price,
+                        user=request.user,
+                        notes=f'Возврат из коррекции: {bouquet_nom.name}',
+                    )
+                    _update_stock_balance(org, return_wh, nom, return_qty)
+
+                if writeoff_qty > 0:
+                    # FIFO-списание (вместо простого StockMovement)
+                    try:
+                        wo_result = fifo_write_off(
+                            organization=org,
+                            warehouse=warehouse,
+                            nomenclature=nom,
+                            quantity=writeoff_qty,
+                            user=request.user,
+                        )
+                        for r in wo_result:
+                            StockMovement.objects.create(
+                                organization=org,
+                                nomenclature=nom,
+                                movement_type=StockMovement.MovementType.WRITE_OFF,
+                                warehouse_from=warehouse,
+                                batch=r['batch'],
+                                quantity=r['qty'],
+                                price=r['price'],
+                                write_off_reason=row.get('reason', 'other'),
+                                user=request.user,
+                                notes=f'Списание из коррекции: {bouquet_nom.name}',
+                            )
+                        _update_stock_balance(org, warehouse, nom, -writeoff_qty)
+                    except InsufficientStockError:
+                        # Если не хватает на FIFO — записываем обычное движение
+                        StockMovement.objects.create(
+                            organization=org,
+                            nomenclature=nom,
+                            movement_type=StockMovement.MovementType.WRITE_OFF,
+                            warehouse_from=warehouse,
+                            quantity=writeoff_qty,
+                            price=nom.purchase_price,
+                            write_off_reason=row.get('reason', 'other'),
+                            user=request.user,
+                            notes=f'Списание из коррекции: {bouquet_nom.name}',
+                        )
+                        _update_stock_balance(org, warehouse, nom, -writeoff_qty)
+
+                if add_qty > 0 and nom.nomenclature_type != 'service':
+                    add_wh = warehouse
+                    if row.get('add_warehouse'):
+                        add_wh = Warehouse.objects.get(pk=row['add_warehouse'])
+                    add_fifo = fifo_write_off(
+                        organization=org,
+                        warehouse=add_wh,
+                        nomenclature=nom,
+                        quantity=add_qty,
+                        user=request.user,
+                    )
+                    for r in add_fifo:
+                        StockMovement.objects.create(
+                            organization=org,
+                            nomenclature=nom,
+                            movement_type=StockMovement.MovementType.ASSEMBLY,
+                            warehouse_from=add_wh,
+                            batch=r['batch'],
+                            quantity=r['qty'],
+                            price=r['price'],
+                            user=request.user,
+                            notes=f'Добавление в коррекцию: {bouquet_nom.name}',
+                        )
+                    _update_stock_balance(org, add_wh, nom, -add_qty)
+
+            # 3) вернуть скорректированный букет на склад
+            corrected_batch = Batch.objects.create(
+                organization=org,
+                nomenclature=bouquet_nom,
+                warehouse=warehouse,
+                purchase_price=bouquet_cost,
+                quantity=Decimal('1'),
+                remaining=Decimal('1'),
+                arrival_date=timezone.now().date(),
+                notes=f'Скорректированный букет: {bouquet_nom.name}',
+            )
+            StockMovement.objects.create(
+                organization=org,
+                nomenclature=bouquet_nom,
+                movement_type=StockMovement.MovementType.RECEIPT,
+                warehouse_to=warehouse,
+                batch=corrected_batch,
+                quantity=Decimal('1'),
+                price=bouquet_cost,
+                user=request.user,
+                notes=f'Коррекция букета: {bouquet_nom.name}',
+            )
+            _update_stock_balance(org, warehouse, bouquet_nom, Decimal('1'))
+
+            return Response({
+                'status': 'ok',
+                'message': f'Букет "{bouquet_nom.name}" скорректирован.',
             })
         except InsufficientStockError as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)

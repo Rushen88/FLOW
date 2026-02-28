@@ -118,8 +118,8 @@ class Transaction(models.Model):
         related_name='transactions', verbose_name='Заказ',
     )
     employee = models.ForeignKey(
-        'staff.Employee', on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='transactions', verbose_name='Сотрудник',
+        'core.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='employee_transactions', verbose_name='Сотрудник',
     )
     description = models.TextField('Описание', blank=True, default='')
     user = models.ForeignKey(

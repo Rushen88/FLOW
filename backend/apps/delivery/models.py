@@ -42,7 +42,7 @@ class Courier(models.Model):
         related_name='couriers', verbose_name='Организация',
     )
     employee = models.ForeignKey(
-        'staff.Employee', on_delete=models.SET_NULL, null=True, blank=True,
+        'core.User', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='courier_profile', verbose_name='Сотрудник',
     )
     name = models.CharField('Имя', max_length=255)

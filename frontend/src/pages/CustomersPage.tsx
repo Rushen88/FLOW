@@ -7,6 +7,7 @@ import {
 import Grid from '@mui/material/Grid2'
 import { Add, Edit, Delete, Close, People, Group } from '@mui/icons-material'
 import api from '../api'
+import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 import extractError from '../utils/extractError'
 import DataTable from '../components/DataTable'
@@ -44,6 +45,7 @@ const defaultGrpForm = () => ({ name: '', discount_percent: '', color: '#1976d2'
 
 export default function CustomersPage() {
   const { notify } = useNotification()
+  const { user } = useAuth()
   const [tab, setTab] = useState(0)
 
   // ─── Customers state ───
@@ -92,7 +94,7 @@ export default function CustomersPage() {
       .then(res => setCusts(res.data.results || res.data || []))
       .catch(() => notify('Ошибка загрузки клиентов', 'error'))
       .finally(() => setCustLoad(false))
-  }, [custSearch, filterActive, notify])
+  }, [custSearch, filterActive, notify, user?.active_trading_point])
 
   const fetchGroups = useCallback(() => {
     setGrpLoad(true)
@@ -100,7 +102,7 @@ export default function CustomersPage() {
       .then(res => setGroups(res.data.results || res.data || []))
       .catch(() => notify('Ошибка загрузки групп', 'error'))
       .finally(() => setGrpLoad(false))
-  }, [notify])
+  }, [notify, user?.active_trading_point])
 
   useEffect(() => { fetchCustomers(); fetchGroups() }, [fetchCustomers, fetchGroups])
 

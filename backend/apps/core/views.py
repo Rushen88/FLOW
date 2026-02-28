@@ -159,7 +159,7 @@ class UserViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         return qs.none()
 
     def get_permissions(self):
-        if self.action in ('me', 'update_me', 'change_my_password', 'set_active_org'):
+        if self.action in ('me', 'update_me', 'change_my_password', 'set_active_org', 'set_active_tp'):
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
 
@@ -242,11 +242,45 @@ class UserViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['post'], url_path='me/set-active-tp')
+    def set_active_tp(self, request):
+        """
+        Выбор «рабочей» торговой точки.
+        Доступно для суперадминов и владельцев.
+        POST { "trading_point": "<uuid>" }   — устанавливает
+        POST { "trading_point": null }       — сбрасывает (видит все точки)
+        """
+        user = request.user
+        if not user.is_superuser and user.role not in ('owner', 'admin'):
+            return Response(
+                {'detail': 'Только владелец/администратор может переключать точку.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        tp_id = request.data.get('trading_point')
+        if tp_id:
+            org = _resolve_org(user)
+            try:
+                tp = TradingPoint.objects.get(pk=tp_id)
+                if org and str(tp.organization_id) != str(org.id):
+                    raise ValidationError({'trading_point': 'Точка не принадлежит текущей организации.'})
+            except TradingPoint.DoesNotExist:
+                raise ValidationError({'trading_point': 'Торговая точка не найдена.'})
+            user.active_trading_point = tp
+        else:
+            user.active_trading_point = None
+        user.save(update_fields=['active_trading_point'])
+        serializer = self.get_serializer(user)
+        return Response(serializer.data)
+
 
 class TradingPointViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = TradingPointSerializer
     queryset = TradingPoint.objects.all()
-    permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
 
     def get_queryset(self):
         qs = TradingPoint.objects.select_related('organization', 'manager')
@@ -256,11 +290,15 @@ class TradingPointViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 class WarehouseViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = WarehouseSerializer
     queryset = Warehouse.objects.all()
-    permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
 
     def get_queryset(self):
         qs = Warehouse.objects.select_related('organization', 'trading_point')
-        qs = _tenant_filter(qs, self.request.user)
+        qs = _tenant_filter(qs, self.request.user, tp_field='trading_point')
         tp = self.request.query_params.get('trading_point')
         if tp:
             qs = qs.filter(trading_point_id=tp)
@@ -270,7 +308,11 @@ class WarehouseViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 class PaymentMethodViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = PaymentMethodSerializer
     queryset = PaymentMethod.objects.all()
-    permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
 
     def get_queryset(self):
         qs = PaymentMethod.objects.all()

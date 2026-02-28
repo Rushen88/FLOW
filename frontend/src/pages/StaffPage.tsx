@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Typography, TextField, Button, Tab, Tabs, IconButton, Chip, MenuItem,
-  Switch, FormControlLabel,
+  Switch, FormControlLabel, Divider,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
-import { Add, Edit, Delete, People, Work, Schedule, Payments } from '@mui/icons-material'
+import { Add, Edit, Delete, People, Work, Schedule, Payments, VpnKey } from '@mui/icons-material'
 import api from '../api'
+import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 import extractError from '../utils/extractError'
 import DataTable from '../components/DataTable'
@@ -15,11 +16,11 @@ import ConfirmDialog from '../components/ConfirmDialog'
 // ─── Types ───
 interface Position { id: string; organization: string; name: string; base_salary: string; description: string }
 interface Employee {
-  id: string; organization: string; user: string | null; first_name: string; last_name: string
+  id: string; organization: string; first_name: string; last_name: string
   patronymic: string; phone: string; email: string; position: string; trading_point: string | null
   hire_date: string; fire_date: string | null; is_active: boolean; notes: string
-  full_name: string; position_name: string
-  username: string; user_role: string
+  full_name: string; position_name: string; trading_point_name: string
+  has_account: boolean; username: string; role: string
 }
 interface Shift {
   id: string; organization: string; employee: string; trading_point: string
@@ -56,7 +57,7 @@ const ROLES = [
 const defaultEmpForm = () => ({
   first_name: '', last_name: '', patronymic: '', phone: '', email: '',
   position: '', trading_point: '', hire_date: '', fire_date: '', is_active: true, notes: '',
-  create_username: '', create_password: '', create_role: 'seller',
+  username: '', password: '', role: 'seller',
 })
 const defaultPosForm = () => ({ name: '', base_salary: '', description: '' })
 const defaultShiftForm = () => ({
@@ -70,6 +71,7 @@ const defaultAccrualForm = () => ({
 
 export default function StaffPage() {
   const { notify } = useNotification()
+  const { user } = useAuth()
   const [tab, setTab] = useState(0)
   const [positions, setPositions] = useState<Position[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
@@ -96,7 +98,7 @@ export default function StaffPage() {
       .then(r => setEmployees(r.data.results || r.data || []))
       .catch(() => notify('Ошибка загрузки сотрудников', 'error'))
       .finally(() => setEmpLoad(false))
-  }, [empSearch, notify])
+  }, [empSearch, notify, user?.active_trading_point])
 
   useEffect(() => { fetchEmployees() }, [fetchEmployees])
 
@@ -116,7 +118,8 @@ export default function StaffPage() {
         phone: e.phone || '', email: e.email || '', position: e.position || '',
         trading_point: e.trading_point || '', hire_date: e.hire_date || '',
         fire_date: e.fire_date || '', is_active: e.is_active, notes: e.notes || '',
-        create_username: '', create_password: '', create_role: e.user_role || 'seller',
+        username: e.username || '', password: '',
+        role: e.role || 'seller',
       })
     } else { setEditEmp(null); setEmpForm(defaultEmpForm()) }
     setEmpDlg(true)
@@ -130,17 +133,12 @@ export default function StaffPage() {
       if (!d.position) d.position = null
       if (!d.fire_date) d.fire_date = null
       if (!d.hire_date) d.hire_date = null
-      if (!editEmp && d.create_username) {
-        // fields already in d from empForm spread
-      } else {
-        delete d.create_username
-        delete d.create_password
-        delete d.create_role
-      }
+      // Don't send empty password on edit
+      if (!d.password) delete d.password
       if (editEmp) { await api.patch(`/staff/employees/${editEmp.id}/`, d); notify('Сотрудник обновлён') }
       else { await api.post('/staff/employees/', d); notify('Сотрудник создан') }
       setEmpDlg(false); fetchEmployees()
-    } catch (err) { notify(extractError(err, 'Ошибка сохранения сотрудника'), 'error') }
+    } catch (err) { notify(extractError(err, 'Ошибка сохранения'), 'error') }
     setEmpSaving(false)
   }
 
@@ -327,14 +325,16 @@ export default function StaffPage() {
   const empCols = [
     { key: 'full_name', label: 'ФИО', render: (v: string) => <Typography fontWeight={600} variant="body2">{v}</Typography> },
     { key: 'position_name', label: 'Должность' },
+    { key: 'trading_point_name', label: 'Торговая точка' },
     { key: 'phone', label: 'Телефон' },
-    { key: 'email', label: 'Email' },
-    { key: 'username', label: 'Логин', render: (v: string) => v || <Typography variant="body2" color="text.secondary">—</Typography> },
-    { key: 'user_role', label: 'Роль', render: (v: string) => {
+    { key: 'username', label: 'Логин', render: (v: string, r: Employee) =>
+      v ? <Chip label={v} size="small" variant="outlined" color={r.is_active ? 'primary' : 'default'} />
+        : <Typography variant="body2" color="text.secondary">—</Typography>
+    },
+    { key: 'role', label: 'Роль', render: (v: string) => {
       const r = ROLES.find(x => x.value === v)
       return r ? <Chip label={r.label} size="small" variant="outlined" /> : <Typography variant="body2" color="text.secondary">—</Typography>
     }},
-    { key: 'hire_date', label: 'Дата найма' },
     { key: 'is_active', label: 'Статус', render: (v: boolean) => <Chip label={v ? 'Активен' : 'Уволен'} size="small" color={v ? 'success' : 'default'} /> },
     { key: '_actions', label: '', width: 100, render: (_: any, r: Employee) => (
       <>
@@ -409,7 +409,7 @@ export default function StaffPage() {
           <DataTable
             columns={empCols} rows={employees} loading={empLoad}
             search={empSearch} onSearchChange={setEmpSearch}
-            searchPlaceholder="Поиск по имени, фамилии, телефону..."
+            searchPlaceholder="Поиск по имени, фамилии, телефону, логину..."
             headerActions={
               <Button variant="contained" startIcon={<Add />} onClick={() => openEmpDlg()}>Добавить</Button>
             }
@@ -419,6 +419,7 @@ export default function StaffPage() {
             title={editEmp ? 'Редактировать сотрудника' : 'Новый сотрудник'} loading={empSaving}
           >
             <Grid container spacing={2}>
+              {/* ── Личные данные ── */}
               <Grid size={4}>
                 <TextField fullWidth label="Фамилия" required value={empForm.last_name}
                   onChange={e => setEmpForm({ ...empForm, last_name: e.target.value })} />
@@ -439,68 +440,76 @@ export default function StaffPage() {
                 <TextField fullWidth label="Email" value={empForm.email}
                   onChange={e => setEmpForm({ ...empForm, email: e.target.value })} />
               </Grid>
-              <Grid size={6}>
-                <TextField fullWidth select label="Должность" value={empForm.position}
+
+              {/* ── Работа ── */}
+              <Grid size={12}>
+                <Divider sx={{ my: 0.5 }} />
+              </Grid>
+              <Grid size={4}>
+                <TextField fullWidth label="Должность" select value={empForm.position}
                   onChange={e => setEmpForm({ ...empForm, position: e.target.value })}>
                   <MenuItem value="">— Не выбрана —</MenuItem>
                   {positions.map(p => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
                 </TextField>
               </Grid>
-              <Grid size={6}>
-                <TextField fullWidth select label="Торговая точка" value={empForm.trading_point}
+              <Grid size={4}>
+                <TextField fullWidth label="Торговая точка" select value={empForm.trading_point}
                   onChange={e => setEmpForm({ ...empForm, trading_point: e.target.value })}>
                   <MenuItem value="">— Не выбрана —</MenuItem>
                   {tradingPoints.map(tp => <MenuItem key={tp.id} value={tp.id}>{tp.name}</MenuItem>)}
                 </TextField>
               </Grid>
-              <Grid size={6}>
-                <TextField fullWidth label="Дата найма" type="date" required
+              <Grid size={4}>
+                <TextField fullWidth label="Дата найма" type="date"
                   value={empForm.hire_date} onChange={e => setEmpForm({ ...empForm, hire_date: e.target.value })}
                   slotProps={{ inputLabel: { shrink: true } }} />
               </Grid>
-              <Grid size={6}>
+              <Grid size={4}>
                 <TextField fullWidth label="Дата увольнения" type="date"
                   value={empForm.fire_date} onChange={e => setEmpForm({ ...empForm, fire_date: e.target.value })}
                   slotProps={{ inputLabel: { shrink: true } }} />
               </Grid>
-              <Grid size={12}>
-                <FormControlLabel
+              <Grid size={4}>
+                <FormControlLabel sx={{ mt: 1 }}
                   control={<Switch checked={empForm.is_active} onChange={e => setEmpForm({ ...empForm, is_active: e.target.checked })} />}
                   label="Активен"
                 />
               </Grid>
-              {!editEmp && (
-                <>
-                  <Grid size={12}>
-                    <Typography variant="subtitle2" fontWeight={600} sx={{ mt: 1 }}>
-                      Учётная запись (необязательно)
-                    </Typography>
-                  </Grid>
-                  <Grid size={4}>
-                    <TextField fullWidth label="Логин" value={empForm.create_username}
-                      onChange={e => setEmpForm({ ...empForm, create_username: e.target.value })}
-                      helperText="Если указан, будет создан пользователь" />
-                  </Grid>
-                  <Grid size={4}>
-                    <TextField fullWidth label="Пароль" type="password" value={empForm.create_password}
-                      onChange={e => setEmpForm({ ...empForm, create_password: e.target.value })}
-                      helperText="Мин. 8 символов" />
-                  </Grid>
-                  <Grid size={4}>
-                    <TextField fullWidth select label="Роль" value={empForm.create_role}
-                      onChange={e => setEmpForm({ ...empForm, create_role: e.target.value })}>
-                      {ROLES.map(r => <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>)}
-                    </TextField>
-                  </Grid>
-                </>
-              )}
-              {editEmp && editEmp.user && (
-                <Grid size={12}>
-                  <Typography variant="body2" color="text.secondary">
-                    Привязан к пользователю: <b>{editEmp.username}</b> (роль: {ROLES.find(r => r.value === editEmp.user_role)?.label || editEmp.user_role})
+
+              {/* ── Доступ в систему ── */}
+              <Grid size={12}>
+                <Divider sx={{ my: 0.5 }} />
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+                  <VpnKey fontSize="small" color="action" />
+                  <Typography variant="subtitle2" fontWeight={600}>
+                    Доступ в систему
                   </Typography>
-                </Grid>
-              )}
+                  <Typography variant="caption" color="text.secondary">
+                    — заполните логин и пароль, чтобы сотрудник мог входить самостоятельно
+                  </Typography>
+                </Box>
+              </Grid>
+              <Grid size={4}>
+                <TextField fullWidth label="Логин" value={empForm.username}
+                  onChange={e => setEmpForm({ ...empForm, username: e.target.value })}
+                  placeholder={editEmp ? undefined : 'Придумайте логин'}
+                  helperText={editEmp?.has_account ? 'Текущий логин для входа' : 'Необязательно'} />
+              </Grid>
+              <Grid size={4}>
+                <TextField fullWidth label={editEmp?.has_account ? 'Новый пароль' : 'Пароль'}
+                  type="password" value={empForm.password}
+                  onChange={e => setEmpForm({ ...empForm, password: e.target.value })}
+                  placeholder={editEmp?.has_account ? '••••••' : 'Мин. 8 символов'}
+                  helperText={editEmp?.has_account ? 'Оставьте пустым, если не меняете' : 'Необязательно'} />
+              </Grid>
+              <Grid size={4}>
+                <TextField fullWidth label="Роль" select required value={empForm.role}
+                  onChange={e => setEmpForm({ ...empForm, role: e.target.value })}>
+                  {ROLES.map(r => <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>)}
+                </TextField>
+              </Grid>
+
+              {/* ── Дополнительно ── */}
               <Grid size={12}>
                 <TextField fullWidth label="Заметки" multiline rows={2} value={empForm.notes}
                   onChange={e => setEmpForm({ ...empForm, notes: e.target.value })} />

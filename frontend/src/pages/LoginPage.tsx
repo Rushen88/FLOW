@@ -95,7 +95,7 @@ export default function LoginPage() {
           </form>
 
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 3, textAlign: 'center' }}>
-            Демо: admin / admin123
+            FlowerBoss &copy; {new Date().getFullYear()}
           </Typography>
         </CardContent>
       </Card>

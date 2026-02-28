@@ -24,49 +24,6 @@ class Position(models.Model):
         return self.name
 
 
-class Employee(models.Model):
-    """Сотрудник."""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    organization = models.ForeignKey(
-        'core.Organization', on_delete=models.CASCADE,
-        related_name='employees', verbose_name='Организация',
-    )
-    user = models.OneToOneField(
-        'core.User', on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='employee_profile', verbose_name='Учётная запись',
-    )
-    first_name = models.CharField('Имя', max_length=150)
-    last_name = models.CharField('Фамилия', max_length=150)
-    patronymic = models.CharField('Отчество', max_length=150, blank=True, default='')
-    phone = models.CharField('Телефон', max_length=20, blank=True, default='')
-    email = models.EmailField('Email', blank=True, default='')
-    position = models.ForeignKey(
-        Position, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='employees', verbose_name='Должность',
-    )
-    trading_point = models.ForeignKey(
-        'core.TradingPoint', on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='employees', verbose_name='Торговая точка',
-    )
-    hire_date = models.DateField('Дата приёма', null=True, blank=True)
-    fire_date = models.DateField('Дата увольнения', null=True, blank=True)
-    is_active = models.BooleanField('Активен', default=True)
-    notes = models.TextField('Примечания', blank=True, default='')
-
-    class Meta:
-        db_table = 'employees'
-        verbose_name = 'Сотрудник'
-        verbose_name_plural = 'Сотрудники'
-
-    def __str__(self):
-        return f'{self.last_name} {self.first_name}'
-
-    @property
-    def full_name(self):
-        parts = [self.last_name, self.first_name, self.patronymic]
-        return ' '.join(p for p in parts if p)
-
-
 class PayrollScheme(models.Model):
     """Схема начисления зарплаты."""
 
@@ -79,7 +36,7 @@ class PayrollScheme(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     employee = models.ForeignKey(
-        Employee, on_delete=models.CASCADE,
+        'core.User', on_delete=models.CASCADE,
         related_name='payroll_schemes', verbose_name='Сотрудник',
     )
     scheme_type = models.CharField(
@@ -112,7 +69,7 @@ class Shift(models.Model):
         related_name='shifts', verbose_name='Организация',
     )
     employee = models.ForeignKey(
-        Employee, on_delete=models.CASCADE,
+        'core.User', on_delete=models.CASCADE,
         related_name='shifts', verbose_name='Сотрудник',
     )
     trading_point = models.ForeignKey(
@@ -150,7 +107,7 @@ class SalaryAccrual(models.Model):
         related_name='salary_accruals', verbose_name='Организация',
     )
     employee = models.ForeignKey(
-        Employee, on_delete=models.CASCADE,
+        'core.User', on_delete=models.CASCADE,
         related_name='salary_accruals', verbose_name='Сотрудник',
     )
     period_start = models.DateField('Начало периода')

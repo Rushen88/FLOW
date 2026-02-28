@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Box, Typography, Chip, TextField, MenuItem, Button,
-  IconButton, Divider, Autocomplete, Collapse, Switch, FormControlLabel,
+  IconButton, Divider, Autocomplete, Collapse,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
 import { Delete, ShoppingCart, AddCircleOutline, ExpandMore, ExpandLess } from '@mui/icons-material'
+import { useLocation } from 'react-router-dom'
 import api from '../api'
 import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
@@ -35,7 +36,25 @@ interface Ref { id: string; name: string }
 interface NomRef { id: string; name: string; retail_price: string; nomenclature_type: string }
 interface CustomerRef { id: string; full_name?: string; first_name?: string; last_name?: string }
 interface UserRef { id: string; full_name: string; username: string }
-interface StockSummary { nomenclature: string; nomenclature_name: string; warehouse: string; warehouse_name: string; total_quantity: string }
+interface StockWarehouse {
+  warehouse: string
+  warehouse_name: string
+  trading_point: string
+  is_default_for_sales: boolean
+  qty: string
+}
+interface StockSummary {
+  nomenclature: string
+  nomenclature_name: string
+  total_qty?: string
+  total_quantity?: string
+  warehouses: StockWarehouse[]
+}
+interface BouquetTemplateRef {
+  id: string
+  nomenclature: string
+  components: { nomenclature_name: string; quantity: string }[]
+}
 
 // ─── Constants ───
 const STATUS_CHOICES: { value: string; label: string; color: 'warning' | 'success' | 'error' }[] = [
@@ -50,16 +69,18 @@ const fmtCurrency = (v: string | number) =>
 
 interface ItemRow {
   nomenclature: string
+  warehouse: string
   quantity: string
   price: string
   discount_percent: string
   total: string
 }
-const emptyItemRow = (): ItemRow => ({ nomenclature: '', quantity: '1', price: '', discount_percent: '0', total: '0' })
+const emptyItemRow = (): ItemRow => ({ nomenclature: '', warehouse: '', quantity: '1', price: '', discount_percent: '0', total: '0' })
 
 export default function SalesPage() {
   const { user } = useAuth()
   const { notify } = useNotification()
+  const location = useLocation()
 
   // ─── Helper data ───
   const [tradingPoints, setTradingPoints] = useState<Ref[]>([])
@@ -67,26 +88,37 @@ export default function SalesPage() {
   const [customers, setCustomers] = useState<CustomerRef[]>([])
   const [nomenclatures, setNomenclatures] = useState<NomRef[]>([])
   const [users, setUsers] = useState<UserRef[]>([])
+  const [bouquetTemplates, setBouquetTemplates] = useState<BouquetTemplateRef[]>([])
   const [stockSummary, setStockSummary] = useState<StockSummary[]>([])
 
   const fetchHelpers = useCallback(async () => {
     try {
-      const [tpRes, pmRes, custRes, nomRes, usersRes, stockRes] = await Promise.all([
+      const [tpRes, pmRes, custRes, nomRes, usersRes, tplRes] = await Promise.all([
         api.get('/core/trading-points/'),
         api.get('/core/payment-methods/'),
         api.get('/customers/customers/'),
         api.get('/nomenclature/items/'),
         api.get('/core/users/'),
-        api.get('/inventory/stock/summary/').catch(() => ({ data: [] })),
+        api.get('/nomenclature/bouquet-templates/').catch(() => ({ data: [] })),
       ])
+
+      // Определяем торговую точку для фильтрации остатков:
+      // 1) active_trading_point из профиля (SA / Owner)
+      // 2) trading_point — закреплённая ТТ сотрудника
+      const effectiveTp = user?.active_trading_point || user?.trading_point || null
+      const stockRes = await api.get('/inventory/stock/summary/', {
+        params: effectiveTp ? { trading_point: effectiveTp } : undefined,
+      }).catch(() => ({ data: [] }))
+
       setTradingPoints(tpRes.data.results || tpRes.data || [])
       setPaymentMethods(pmRes.data.results || pmRes.data || [])
       setCustomers(custRes.data.results || custRes.data || [])
       setNomenclatures(nomRes.data.results || nomRes.data || [])
       setUsers(usersRes.data.results || usersRes.data || [])
+      setBouquetTemplates(tplRes.data.results || tplRes.data || [])
       setStockSummary(stockRes.data.results || stockRes.data || [])
     } catch (err) { notify(extractError(err, 'Ошибка загрузки справочников'), 'error') }
-  }, [notify])
+  }, [notify, user?.id, user?.active_trading_point])
 
   useEffect(() => { fetchHelpers() }, [fetchHelpers])
 
@@ -94,12 +126,30 @@ export default function SalesPage() {
 
   // Stock info per nomenclature
   const stockByNom = useMemo(() => {
-    const map: Record<string, { total: number; warehouses: { name: string; qty: number }[] }> = {}
+    const map: Record<string, { total: number; warehouses: { id: string; name: string; qty: number; isDefaultForSales: boolean }[]; preferredWarehouse?: string }> = {}
     stockSummary.forEach(s => {
       if (!map[s.nomenclature]) map[s.nomenclature] = { total: 0, warehouses: [] }
-      const qty = parseFloat(s.total_quantity) || 0
+      const qty = parseFloat(s.total_quantity || s.total_qty || '0') || 0
       map[s.nomenclature].total += qty
-      if (qty > 0) map[s.nomenclature].warehouses.push({ name: s.warehouse_name, qty })
+      if (qty > 0) {
+        for (const wh of s.warehouses || []) {
+          const whQty = parseFloat(wh.qty) || 0
+          if (whQty <= 0) continue
+          map[s.nomenclature].warehouses.push({
+            id: wh.warehouse,
+            name: wh.warehouse_name,
+            qty: whQty,
+            isDefaultForSales: !!wh.is_default_for_sales,
+          })
+        }
+      }
+      if (!map[s.nomenclature].preferredWarehouse && map[s.nomenclature].warehouses.length) {
+        const defaults = map[s.nomenclature].warehouses.filter(w => w.isDefaultForSales)
+        const preferred = (defaults.length === 1 ? defaults : (defaults.length > 1 ? defaults : map[s.nomenclature].warehouses))
+            .slice()
+            .sort((a, b) => b.qty - a.qty)[0]
+        map[s.nomenclature].preferredWarehouse = preferred?.id
+      }
     })
     return map
   }, [stockSummary])
@@ -128,7 +178,7 @@ export default function SalesPage() {
       })
       .catch((err) => { setSales([]); notify(extractError(err, 'Ошибка загрузки продаж'), 'error') })
       .finally(() => setLoading(false))
-  }, [page, search, filterStatus, filterPaid, notify])
+  }, [page, search, filterStatus, filterPaid, notify, user?.active_trading_point])
 
   useEffect(() => { fetchSales() }, [fetchSales])
 
@@ -137,26 +187,55 @@ export default function SalesPage() {
   const [editSale, setEditSale] = useState<Sale | null>(null)
   const [saleForm, setSaleForm] = useState({
     trading_point: '', customer: '', payment_method: '', notes: '',
-    status: 'completed', is_paid: false, seller: '', discount_percent: '0',
+    status: 'completed', seller: '', discount_percent: '0',
   })
   const [saleItems, setSaleItems] = useState<ItemRow[]>([emptyItemRow()])
   const [saving, setSaving] = useState(false)
 
   const openCreateDlg = () => {
     setEditSale(null)
+    const defaultTradingPoint = user?.active_trading_point || user?.trading_point || (tradingPoints.length === 1 ? tradingPoints[0].id : '')
     setSaleForm({
-      trading_point: tradingPoints.length === 1 ? tradingPoints[0].id : '',
+      trading_point: defaultTradingPoint,
       customer: '',
       payment_method: '',
       notes: '',
       status: 'completed',
-      is_paid: false,
       seller: user?.id || '',
       discount_percent: '0',
     })
     setSaleItems([emptyItemRow()])
     setSaleDlg(true)
   }
+
+  useEffect(() => {
+    const state = location.state as { prefillSaleItem?: { nomenclature: string; quantity?: string } } | null
+    const prefill = state?.prefillSaleItem
+    if (!prefill?.nomenclature) return
+    const nom = nomenclatures.find(n => n.id === prefill.nomenclature)
+    const preferredWarehouse = stockByNom[prefill.nomenclature]?.preferredWarehouse || ''
+    const defaultTradingPoint = user?.active_trading_point || user?.trading_point || (tradingPoints.length === 1 ? tradingPoints[0].id : '')
+    setEditSale(null)
+    setSaleForm({
+      trading_point: defaultTradingPoint,
+      customer: '',
+      payment_method: '',
+      notes: '',
+      status: 'completed',
+      seller: user?.id || '',
+      discount_percent: '0',
+    })
+    setSaleItems([{
+      nomenclature: prefill.nomenclature,
+      warehouse: preferredWarehouse,
+      quantity: prefill.quantity || '1',
+      price: nom?.retail_price || '',
+      discount_percent: '0',
+      total: '0',
+    }])
+    setSaleDlg(true)
+    window.history.replaceState({}, document.title)
+  }, [location.state, nomenclatures, stockByNom, user?.id, user?.trading_point, tradingPoints])
 
   const openEditDlg = (sale: Sale) => {
     setEditSale(sale)
@@ -166,13 +245,13 @@ export default function SalesPage() {
       payment_method: sale.payment_method || '',
       notes: sale.notes || '',
       status: sale.status,
-      is_paid: sale.is_paid,
       seller: sale.seller || '',
       discount_percent: sale.discount_percent || '0',
     })
     if (sale.items?.length) {
       setSaleItems(sale.items.map(it => ({
         nomenclature: it.nomenclature,
+        warehouse: it.warehouse || '',
         quantity: it.quantity,
         price: it.price,
         discount_percent: it.discount_percent || '0',
@@ -183,7 +262,7 @@ export default function SalesPage() {
         .then(res => {
           const items = res.data.results || res.data || []
           setSaleItems(items.length ? items.map((it: SaleItem) => ({
-            nomenclature: it.nomenclature, quantity: it.quantity,
+            nomenclature: it.nomenclature, warehouse: it.warehouse || '', quantity: it.quantity,
             price: it.price, discount_percent: it.discount_percent || '0',
             total: it.total || '0',
           })) : [emptyItemRow()])
@@ -200,6 +279,7 @@ export default function SalesPage() {
       if (field === 'nomenclature') {
         const nom = nomenclatures.find(n => n.id === value)
         if (nom) copy[idx].price = nom.retail_price || ''
+        copy[idx].warehouse = stockByNom[value]?.preferredWarehouse || ''
       }
       const qty = parseFloat(copy[idx].quantity) || 0
       const price = parseFloat(copy[idx].price) || 0
@@ -229,8 +309,8 @@ export default function SalesPage() {
   const saveSale = async () => {
     setSaving(true)
     try {
-      const validItems = saleItems.filter(it => it.nomenclature && it.quantity && it.price)
-      if (validItems.length === 0) { notify('Добавьте хотя бы одну позицию', 'warning'); setSaving(false); return }
+const validItems = saleItems.filter(it => it.nomenclature && parseFloat(it.quantity) > 0)
+        if (validItems.length === 0) { notify('Добавьте хотя бы одну позицию с количеством больше нуля', 'warning'); setSaving(false); return }
 
       const payload: Record<string, any> = {
         trading_point: saleForm.trading_point || null,
@@ -239,7 +319,6 @@ export default function SalesPage() {
         seller: saleForm.seller || null,
         notes: saleForm.notes,
         status: saleForm.status,
-        is_paid: saleForm.is_paid,
         discount_percent: saleForm.discount_percent || '0',
         items_data: validItems.map(it => {
           const qty = parseFloat(it.quantity) || 0
@@ -247,6 +326,7 @@ export default function SalesPage() {
           const disc = parseFloat(it.discount_percent) || 0
           return {
             nomenclature: it.nomenclature,
+            warehouse: it.warehouse || null,
             quantity: it.quantity,
             price: it.price,
             discount_percent: it.discount_percent || '0',
@@ -310,7 +390,9 @@ export default function SalesPage() {
 
   // Nom options for Autocomplete
   const nomOptions = useMemo(() =>
-    nomenclatures.map(n => {
+    nomenclatures
+      .filter(n => (stockByNom[n.id]?.total || 0) > 0)
+      .map(n => {
       const stock = stockByNom[n.id]
       return {
         ...n,
@@ -449,13 +531,7 @@ export default function SalesPage() {
               slotProps={{ htmlInput: { min: 0, max: 100, step: 1 } }}
             />
           </Grid>
-          <Grid size={2}>
-            <FormControlLabel
-              control={<Switch checked={saleForm.is_paid} onChange={e => setSaleForm(f => ({ ...f, is_paid: e.target.checked }))} />}
-              label="Оплачено"
-              sx={{ mt: 1 }}
-            />
-          </Grid>
+          <Grid size={2} />
           <Grid size={12}>
             <TextField
               fullWidth label="Примечания" multiline minRows={1} value={saleForm.notes}
@@ -473,10 +549,15 @@ export default function SalesPage() {
 
         {saleItems.map((item, idx) => {
           const stock = stockByNom[item.nomenclature]
+          const itemNom = nomenclatures.find(n => n.id === item.nomenclature)
+          const currentWarehouse = stock?.warehouses.find(w => w.id === item.warehouse)
+          const composition = (itemNom?.nomenclature_type === 'bouquet' || itemNom?.nomenclature_type === 'composition')
+            ? (bouquetTemplates.find(t => t.nomenclature === item.nomenclature)?.components || []).map(c => ({ name: c.nomenclature_name, quantity: c.quantity }))
+            : []
           return (
             <Box key={idx} sx={{ mb: 1 }}>
               <Grid container spacing={1.5} alignItems="center">
-                <Grid size={4}>
+                <Grid size={3}>
                   <Autocomplete
                     size="small"
                     options={nomOptions}
@@ -497,6 +578,19 @@ export default function SalesPage() {
                     renderInput={params => <TextField {...params} label="Номенклатура" />}
                     noOptionsText="Не найдено"
                   />
+                </Grid>
+                <Grid size={2}>
+                  <TextField
+                    select fullWidth size="small" label="Склад" value={item.warehouse}
+                    onChange={e => handleItemChange(idx, 'warehouse', e.target.value)}
+                    disabled={!item.nomenclature}
+                  >
+                    {(stock?.warehouses || []).map(w => (
+                      <MenuItem key={w.id} value={w.id}>
+                        {w.name} ({w.qty}){w.isDefaultForSales ? ' • продажи' : ''}
+                      </MenuItem>
+                    ))}
+                  </TextField>
                 </Grid>
                 <Grid size={1.5}>
                   <TextField
@@ -519,21 +613,22 @@ export default function SalesPage() {
                     slotProps={{ htmlInput: { min: 0, max: 100 } }}
                   />
                 </Grid>
-                <Grid size={2}>
+                <Grid size={1.5}>
                   <Typography variant="body2" fontWeight={600} textAlign="right">
                     {fmtCurrency(calcItemTotal(item))}
                   </Typography>
                 </Grid>
-                <Grid size={1.5}>
-                  <IconButton size="small" onClick={() => removeItemRow(idx)} disabled={saleItems.length <= 1}>
-                    <Delete fontSize="small" />
-                  </IconButton>
+                <Grid size={1}>
+                  <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <IconButton size="small" onClick={() => removeItemRow(idx)} disabled={saleItems.length <= 1}>
+                      <Delete fontSize="small" />
+                    </IconButton>
+                  </Box>
                 </Grid>
               </Grid>
-              {/* Stock info */}
-              {item.nomenclature && stock && (
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                  Остаток: {stock.warehouses.map(w => `${w.name}: ${w.qty}`).join(', ')}
+              {!!composition?.length && (
+                <Typography variant="caption" color="text.secondary" sx={{ ml: 1, display: 'block' }}>
+                  Состав: {composition.map(c => `${c.name} × ${c.quantity}`).join(', ')}
                 </Typography>
               )}
             </Box>

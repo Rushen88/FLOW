@@ -6,6 +6,11 @@ class BatchSerializer(serializers.ModelSerializer):
     nomenclature_name = serializers.CharField(source='nomenclature.name', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
 
+    def validate_nomenclature(self, value):
+        if getattr(value, 'nomenclature_type', '') == 'service':
+            raise serializers.ValidationError('Услуги нельзя проводить через поступления.')
+        return value
+
     class Meta:
         model = Batch
         fields = '__all__'
@@ -24,6 +29,11 @@ class StockBalanceSerializer(serializers.ModelSerializer):
 
 class StockMovementSerializer(serializers.ModelSerializer):
     nomenclature_name = serializers.CharField(source='nomenclature.name', read_only=True)
+
+    def validate_nomenclature(self, value):
+        if getattr(value, 'nomenclature_type', '') == 'service':
+            raise serializers.ValidationError('Услуги не участвуют в складском учёте.')
+        return value
 
     class Meta:
         model = StockMovement

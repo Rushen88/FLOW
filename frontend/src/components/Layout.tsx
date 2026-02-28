@@ -24,22 +24,24 @@ interface NavItem {
   path: string
   icon: React.ReactNode
   superuserOnly?: boolean
+  /** Минимальные роли, которым доступен раздел. Если не указано — доступен всем. */
+  allowedRoles?: string[]
 }
 
 const navItems: NavItem[] = [
   { label: 'Дашборд', path: '/', icon: <Dashboard /> },
   { label: 'Номенклатура', path: '/nomenclature', icon: <LocalFlorist /> },
-  { label: 'Склад', path: '/inventory', icon: <Inventory /> },
+  { label: 'Склад', path: '/inventory', icon: <Inventory />, allowedRoles: ['owner', 'admin', 'manager', 'florist'] },
   { label: 'Продажи', path: '/sales', icon: <ShoppingCart /> },
   { label: 'Заказы', path: '/orders', icon: <Assignment /> },
-  { label: 'Клиенты', path: '/customers', icon: <People /> },
-  { label: 'Поставщики', path: '/suppliers', icon: <Store /> },
-  { label: 'Персонал', path: '/staff', icon: <Group /> },
-  { label: 'Финансы', path: '/finance', icon: <AttachMoney /> },
-  { label: 'Маркетинг', path: '/marketing', icon: <Campaign /> },
-  { label: 'Доставка', path: '/delivery', icon: <LocalShipping /> },
-  { label: 'Аналитика', path: '/analytics', icon: <BarChart /> },
-  { label: 'Настройки', path: '/settings', icon: <Settings /> },
+  { label: 'Клиенты', path: '/customers', icon: <People />, allowedRoles: ['owner', 'admin', 'manager', 'seller'] },
+  { label: 'Поставщики', path: '/suppliers', icon: <Store />, allowedRoles: ['owner', 'admin', 'manager'] },
+  { label: 'Персонал', path: '/staff', icon: <Group />, allowedRoles: ['owner', 'admin'] },
+  { label: 'Финансы', path: '/finance', icon: <AttachMoney />, allowedRoles: ['owner', 'admin'] },
+  { label: 'Маркетинг', path: '/marketing', icon: <Campaign />, allowedRoles: ['owner', 'admin', 'manager'] },
+  { label: 'Доставка', path: '/delivery', icon: <LocalShipping />, allowedRoles: ['owner', 'admin', 'manager', 'courier'] },
+  { label: 'Аналитика', path: '/analytics', icon: <BarChart />, allowedRoles: ['owner', 'admin', 'manager'] },
+  { label: 'Настройки', path: '/settings', icon: <Settings />, allowedRoles: ['owner', 'admin'] },
   { label: 'Администрирование', path: '/admin', icon: <AdminPanelSettings />, superuserOnly: true },
 ]
 
@@ -52,10 +54,11 @@ export default function Layout() {
   const theme = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
-  const { user, logout, switchOrganization } = useAuth()
+  const { user, logout, switchOrganization, switchTradingPoint } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(true)
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [allOrgs, setAllOrgs] = useState<OrgOption[]>([])
+  const [allTradingPoints, setAllTradingPoints] = useState<{ id: string; name: string }[]>([])
 
   const currentWidth = drawerOpen ? DRAWER_WIDTH : DRAWER_COLLAPSED
 
@@ -69,9 +72,33 @@ export default function Layout() {
     }
   }, [user?.is_superuser])
 
+  // Загружаем список торговых точек для суперадмина и владельца
+  const showTpSelector = user?.is_superuser || user?.role === 'owner' || user?.role === 'admin'
+  useEffect(() => {
+    if (showTpSelector) {
+      api.get('/core/trading-points/').then(res => {
+        const list = res.data.results || res.data || []
+        setAllTradingPoints(list.map((tp: any) => ({ id: tp.id, name: tp.name })))
+      }).catch(() => {})
+    }
+  }, [showTpSelector, user?.active_organization])
+
   const handleOrgSwitch = async (e: SelectChangeEvent<string>) => {
     const val = e.target.value
-    await switchOrganization(val === '__all__' ? null : val)
+    try {
+      await switchOrganization(val === '__all__' ? null : val)
+    } catch {
+      // error handled in switchOrganization
+    }
+  }
+
+  const handleTpSwitch = async (e: SelectChangeEvent<string>) => {
+    const val = e.target.value
+    try {
+      await switchTradingPoint(val === '__all__' ? null : val)
+    } catch {
+      // error handled in switchTradingPoint
+    }
   }
 
   // Определяем «рабочую» организацию: для суперадмина — active, для обычного — organization
@@ -81,6 +108,8 @@ export default function Layout() {
   // Фильтруем пункты навигации по роли
   const visibleNav = navItems.filter(item => {
     if (item.superuserOnly && !user?.is_superuser) return false
+    if (user?.is_superuser) return true
+    if (item.allowedRoles && user?.role && !item.allowedRoles.includes(user.role)) return false
     return true
   })
 
@@ -207,6 +236,29 @@ export default function Layout() {
                   </MenuItem>
                   {allOrgs.map(o => (
                     <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+
+            {/* ─── TP Switcher для суперадмина и владельца ─── */}
+            {showTpSelector && allTradingPoints.length > 0 && (
+              <FormControl size="small" sx={{ minWidth: 200, mr: 2 }}>
+                <InputLabel id="tp-switch-label">
+                  <Store fontSize="small" sx={{ mr: 0.5, verticalAlign: 'middle' }} /> Точка
+                </InputLabel>
+                <Select
+                  labelId="tp-switch-label"
+                  label="Точка"
+                  value={user?.active_trading_point || '__all__'}
+                  onChange={handleTpSwitch}
+                  sx={{ fontSize: 14 }}
+                >
+                  <MenuItem value="__all__">
+                    <em>Все точки</em>
+                  </MenuItem>
+                  {allTradingPoints.map(tp => (
+                    <MenuItem key={tp.id} value={tp.id}>{tp.name}</MenuItem>
                   ))}
                 </Select>
               </FormControl>

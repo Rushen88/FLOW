@@ -1,11 +1,12 @@
 from rest_framework import viewsets, filters
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Supplier, SupplierNomenclature, SupplierOrder, Claim
 from .serializers import (
     SupplierSerializer, SupplierNomenclatureSerializer,
     SupplierOrderSerializer, ClaimSerializer,
 )
-from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter
+from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, _resolve_org
 
 
 class SupplierViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
@@ -30,6 +31,22 @@ class SupplierNomenclatureViewSet(viewsets.ModelViewSet):
         if supplier_id:
             qs = qs.filter(supplier_id=supplier_id)
         return qs
+
+    def perform_create(self, serializer):
+        """Проверка что поставщик принадлежит организации."""
+        supplier = serializer.validated_data.get('supplier')
+        org = _resolve_org(self.request.user)
+        if supplier and org and str(supplier.organization_id) != str(org.id):
+            raise PermissionDenied('Поставщик не принадлежит вашей организации.')
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Проверка что поставщик принадлежит организации."""
+        supplier = serializer.validated_data.get('supplier', self.get_object().supplier)
+        org = _resolve_org(self.request.user)
+        if supplier and org and str(supplier.organization_id) != str(org.id):
+            raise PermissionDenied('Поставщик не принадлежит вашей организации.')
+        serializer.save()
 
 
 class SupplierOrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
