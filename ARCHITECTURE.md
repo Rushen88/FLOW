@@ -860,3 +860,4 @@ npm run dev                       # → http://localhost:3000
 - ✅ Добавлена валидация допустимых переходов статуса заказа в `OrderSerializer.update()`
 - ✅ Добавлено журналирование переходов статусов через `OrderStatusHistory` при create/update
 - ✅ Добавлены DB-инварианты уникальности номера в пределах организации: `unique_sale_number_per_org`, `unique_order_number_per_org`
+- ✅ Выполнен DDD-рефакторинг: бизнес-логика продаж/заказов вынесена из `sales/serializers.py` в `sales/services.py` (нумерация, синхронизация транзакций, FIFO-списание, валидация переходов статусов, история статусов)

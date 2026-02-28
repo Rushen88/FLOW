@@ -1,9 +1,18 @@
-from decimal import Decimal
-
 from rest_framework import serializers
-from django.db import transaction as db_transaction, models as db_models
-from django.db.models import Max
+from django.db import transaction as db_transaction
 from .models import Sale, SaleItem, Order, OrderItem, OrderStatusHistory
+from .services import (
+    lock_organization_row,
+    generate_sale_number,
+    generate_order_number,
+    resolve_batch_by_warehouse,
+    recalc_sale_totals,
+    do_sale_fifo_write_off,
+    sync_sale_transaction,
+    update_customer_stats,
+    validate_order_status_transition,
+    create_order_status_history,
+)
 
 
 class SaleItemWriteSerializer(serializers.ModelSerializer):
@@ -55,54 +64,6 @@ class SaleItemSerializer(serializers.ModelSerializer):
         return []
 
 
-def _generate_sale_number(organization):
-    """
-    Генерация безопасного числового номера чека.
-    Использует IntegerField-семантику: MAX + 1 с select_for_update.
-    """
-    max_num = (
-        Sale.objects.select_for_update()
-        .filter(organization=organization, number__isnull=False)
-        .exclude(number='')
-        .filter(number__regex=r'^\d+$')
-        .annotate(num_int=db_models.functions.Cast('number', db_models.IntegerField()))
-        .aggregate(m=Max('num_int'))['m']
-    )
-    try:
-        return str((max_num or 0) + 1)
-    except (ValueError, TypeError):
-        return str(Sale.objects.filter(organization=organization).count() + 1)
-
-
-def _generate_order_number(organization):
-    """
-    Генерация безопасного числового номера заказа.
-    Использует IntegerField-семантику: MAX + 1 с select_for_update.
-    """
-    max_num = (
-        Order.objects.select_for_update()
-        .filter(organization=organization, number__isnull=False)
-        .exclude(number='')
-        .filter(number__regex=r'^\d+$')
-        .annotate(num_int=db_models.functions.Cast('number', db_models.IntegerField()))
-        .aggregate(m=Max('num_int'))['m']
-    )
-    try:
-        return str((max_num or 0) + 1)
-    except (ValueError, TypeError):
-        return str(Order.objects.filter(organization=organization).count() + 1)
-
-
-def _lock_organization_row(organization_id):
-    """
-    Сериализация генерации номеров внутри организации.
-    Нужна, чтобы избежать гонок даже при пустой таблице продаж/заказов.
-    """
-    from apps.core.models import Organization
-
-    return Organization.objects.select_for_update().get(pk=organization_id)
-
-
 class SaleSerializer(serializers.ModelSerializer):
     items = SaleItemSerializer(many=True, read_only=True)
     items_data = SaleItemWriteSerializer(many=True, write_only=True, required=False)
@@ -140,39 +101,37 @@ class SaleSerializer(serializers.ModelSerializer):
                 if tp:
                     validated_data['trading_point'] = tp
 
-        _lock_organization_row(validated_data['organization_id'])
+        lock_organization_row(validated_data['organization_id'])
 
         sale = Sale.objects.create(**validated_data)
 
         # Безопасная генерация номера чека (Cast to Integer + Max + 1)
         if not sale.number:
-            sale.number = _generate_sale_number(sale.organization)
+            sale.number = generate_sale_number(sale.organization)
             sale.save(update_fields=['number'])
 
         for item_data in items_data:
             warehouse_id = item_data.pop('warehouse', None)
             if warehouse_id:
-                from apps.inventory.models import Batch
-                batch = Batch.objects.filter(
+                batch = resolve_batch_by_warehouse(
                     organization=sale.organization,
                     nomenclature=item_data.get('nomenclature'),
                     warehouse_id=warehouse_id,
-                    remaining__gt=0,
-                ).order_by('arrival_date', 'created_at').first()
+                )
                 if batch:
                     item_data['batch'] = batch
             SaleItem.objects.create(sale=sale, **item_data)
-        self._recalc_totals(sale)
+        recalc_sale_totals(sale)
 
         # FIFO-списание со склада при завершённой и оплаченной продаже
         if sale.status == Sale.Status.COMPLETED and sale.is_paid:
-            self._do_fifo_write_off(sale)
+            do_sale_fifo_write_off(sale)
 
-        self._sync_transaction(sale)
+        sync_sale_transaction(sale)
 
         # Обновление статистики клиента при завершённой продаже
         if sale.status == Sale.Status.COMPLETED and sale.is_paid and sale.customer:
-            self._update_customer_stats(sale, sale.total, 1)
+            update_customer_stats(sale, sale.total, 1)
 
         return sale
 
@@ -193,168 +152,33 @@ class SaleSerializer(serializers.ModelSerializer):
             for item_data in items_data:
                 warehouse_id = item_data.pop('warehouse', None)
                 if warehouse_id:
-                    from apps.inventory.models import Batch
-                    batch = Batch.objects.filter(
+                    batch = resolve_batch_by_warehouse(
                         organization=instance.organization,
                         nomenclature=item_data.get('nomenclature'),
                         warehouse_id=warehouse_id,
-                        remaining__gt=0,
-                    ).order_by('arrival_date', 'created_at').first()
+                    )
                     if batch:
                         item_data['batch'] = batch
                 SaleItem.objects.create(sale=instance, **item_data)
-            self._recalc_totals(instance)
+            recalc_sale_totals(instance)
 
         # FIFO-списание при переходе в completed + is_paid
         was_completed_paid = (old_status == Sale.Status.COMPLETED and old_is_paid)
         now_completed_paid = (instance.status == Sale.Status.COMPLETED and instance.is_paid)
         if now_completed_paid and not was_completed_paid:
-            self._do_fifo_write_off(instance)
+            do_sale_fifo_write_off(instance)
 
-        self._sync_transaction(instance)
+        sync_sale_transaction(instance)
 
         # Обновление статистики клиента (учитываем переходы статусов)
         if now_completed_paid and not was_completed_paid:
             # Завершили продажу — добавляем статистику
-            self._update_customer_stats(instance, instance.total, 1)
+            update_customer_stats(instance, instance.total, 1)
         elif was_completed_paid and not now_completed_paid:
             # Отменили/переоткрыли продажу — убираем статистику
-            self._update_customer_stats(instance, -instance.total, -1)
+            update_customer_stats(instance, -instance.total, -1)
 
         return instance
-
-    def _do_fifo_write_off(self, sale):
-        """
-        FIFO-списание товаров со склада для позиций продажи.
-        Вызывается при завершении + оплате.
-        """
-        from apps.inventory.services import fifo_write_off, _update_stock_balance, InsufficientStockError
-        from apps.inventory.models import StockMovement
-
-        for item in sale.items.select_related('nomenclature', 'batch').all():
-            nom = item.nomenclature
-            # Услуги не списываем
-            if nom.nomenclature_type == 'service':
-                continue
-            # Определяем склад
-            warehouse = None
-            if item.batch and item.batch.warehouse_id:
-                warehouse = item.batch.warehouse
-            if not warehouse:
-                # Берём дефолтный склад для продаж
-                from apps.core.models import Warehouse
-                warehouse = Warehouse.objects.filter(
-                    organization=sale.organization,
-                    is_default_for_sales=True,
-                ).first()
-            if not warehouse:
-                continue  # Нет склада — пропускаем (пре-ордер)
-
-            try:
-                fifo_result = fifo_write_off(
-                    organization=sale.organization,
-                    warehouse=warehouse,
-                    nomenclature=nom,
-                    quantity=item.quantity,
-                )
-                # Средневзвешенная себестоимость
-                total_cost = sum(r['qty'] * r['price'] for r in fifo_result)
-                item.cost_price = total_cost / item.quantity if item.quantity else Decimal('0')
-                item.save(update_fields=['cost_price'])
-
-                for r in fifo_result:
-                    StockMovement.objects.create(
-                        organization=sale.organization,
-                        nomenclature=nom,
-                        movement_type=StockMovement.MovementType.SALE,
-                        warehouse_from=warehouse,
-                        batch=r['batch'],
-                        quantity=r['qty'],
-                        price=r['price'],
-                        notes=f'Продажа #{sale.number}',
-                    )
-                _update_stock_balance(sale.organization, warehouse, nom, -item.quantity)
-            except InsufficientStockError:
-                # Не блокируем продажу — логируем через cost_price = 0
-                pass
-
-    def _sync_transaction(self, sale):
-        """
-        Синхронизация финансовой транзакции с продажей.
-        Гарантирует ровно 0 или 1 транзакцию для каждой продажи.
-        """
-        from apps.finance.models import Transaction, Wallet
-        
-        should_have_tx = sale.status == Sale.Status.COMPLETED and sale.is_paid
-        wallet = sale.payment_method.wallet if sale.payment_method else None
-        
-        existing_tx = Transaction.objects.filter(sale=sale).select_for_update().first()
-        
-        if should_have_tx and wallet:
-            if existing_tx:
-                # Обновляем только если суммы или кошелёк изменились
-                if existing_tx.wallet_to_id != wallet.id or existing_tx.amount != sale.total:
-                    # Откат старого баланса кошелька
-                    if existing_tx.wallet_to_id:
-                        Wallet.objects.select_for_update().filter(
-                            pk=existing_tx.wallet_to_id
-                        ).update(balance=db_models.F('balance') - existing_tx.amount)
-                    # Обновление транзакции
-                    existing_tx.wallet_to = wallet
-                    existing_tx.amount = sale.total
-                    existing_tx.save(update_fields=['wallet_to', 'amount'])
-                    # Применение нового баланса
-                    Wallet.objects.select_for_update().filter(
-                        pk=wallet.id
-                    ).update(balance=db_models.F('balance') + sale.total)
-                # Если ничего не изменилось — ничего не делаем
-            else:
-                # Создание транзакции
-                Transaction.objects.create(
-                    organization=sale.organization,
-                    transaction_type=Transaction.TransactionType.INCOME,
-                    wallet_to=wallet,
-                    amount=sale.total,
-                    sale=sale,
-                    description=f'Оплата по продаже #{sale.number}'
-                )
-                Wallet.objects.select_for_update().filter(
-                    pk=wallet.id
-                ).update(balance=db_models.F('balance') + sale.total)
-        else:
-            if existing_tx:
-                # Откат и удаление транзакции
-                if existing_tx.wallet_to_id:
-                    Wallet.objects.select_for_update().filter(
-                        pk=existing_tx.wallet_to_id
-                    ).update(balance=db_models.F('balance') - existing_tx.amount)
-                existing_tx.delete()
-
-    def _update_customer_stats(self, sale, delta_total, delta_count):
-        """
-        Обновление статистики клиента (total_purchases, purchases_count).
-        delta_total: сколько добавить/убрать из суммы покупок
-        delta_count: сколько добавить/убрать из количества покупок
-        """
-        if not sale.customer:
-            return
-        from django.db.models import F
-        from apps.customers.models import Customer
-        Customer.objects.filter(pk=sale.customer_id).update(
-            total_purchases=F('total_purchases') + delta_total,
-            purchases_count=F('purchases_count') + delta_count,
-        )
-
-    def _recalc_totals(self, sale):
-        from django.db.models import Sum
-        from decimal import Decimal
-        agg = sale.items.aggregate(total=Sum('total'))['total'] or Decimal('0')
-        sale.subtotal = agg
-        disc_pct = sale.discount_percent or Decimal('0')
-        disc_amt = agg * disc_pct / 100
-        sale.discount_amount = disc_amt
-        sale.total = max(agg - disc_amt, Decimal('0'))
-        sale.save(update_fields=['subtotal', 'discount_amount', 'total'])
 
 
 class SaleListSerializer(serializers.ModelSerializer):
@@ -406,14 +230,14 @@ class OrderSerializer(serializers.ModelSerializer):
 
     @db_transaction.atomic
     def create(self, validated_data):
-        _lock_organization_row(validated_data['organization_id'])
+        lock_organization_row(validated_data['organization_id'])
 
         if not validated_data.get('number'):
-            validated_data['number'] = _generate_order_number(validated_data['organization'])
+            validated_data['number'] = generate_order_number(validated_data['organization'])
 
         order = Order.objects.create(**validated_data)
 
-        OrderStatusHistory.objects.create(
+        create_order_status_history(
             order=order,
             old_status='',
             new_status=order.status,
@@ -427,21 +251,15 @@ class OrderSerializer(serializers.ModelSerializer):
         old_status = instance.status
 
         new_status = validated_data.get('status', old_status)
-        if new_status != old_status and not instance.can_transition_to(new_status):
-            allowed = instance.ALLOWED_TRANSITIONS.get(old_status, [])
-            allowed_labels = [instance.Status(s).label for s in allowed]
-            raise serializers.ValidationError({
-                'status': (
-                    f'Недопустимый переход из "{instance.get_status_display()}" в '
-                    f'"{instance.Status(new_status).label}". '
-                    f'Допустимые переходы: {", ".join(allowed_labels) or "нет"}'
-                )
-            })
+        try:
+            validate_order_status_transition(instance, new_status)
+        except ValueError as exc:
+            raise serializers.ValidationError({'status': str(exc)}) from exc
 
         order = super().update(instance, validated_data)
 
         if new_status != old_status:
-            OrderStatusHistory.objects.create(
+            create_order_status_history(
                 order=order,
                 old_status=old_status,
                 new_status=new_status,
