@@ -148,6 +148,43 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         )
         return Response(result)
 
+    @action(detail=False, methods=['get'], url_path='negative-alerts')
+    def negative_alerts(self, request):
+        """
+        Возвращает информацию о минусовых остатках по рабочей торговой точке пользователя.
+        Используется для периодических напоминаний в UI.
+        """
+        from apps.core.mixins import _resolve_org, _resolve_tp
+
+        org = _resolve_org(request.user)
+        if not org:
+            return Response({'count': 0, 'items': []})
+
+        trading_point_id = request.query_params.get('trading_point')
+        if not trading_point_id:
+            tp = _resolve_tp(request.user)
+            trading_point_id = str(tp.id) if tp else None
+
+        qs = StockBalance.objects.filter(
+            organization=org,
+            quantity__lt=0,
+        ).select_related('warehouse', 'nomenclature', 'warehouse__trading_point')
+
+        if trading_point_id:
+            qs = qs.filter(warehouse__trading_point_id=trading_point_id)
+
+        items = [
+            {
+                'nomenclature': str(sb.nomenclature_id),
+                'nomenclature_name': sb.nomenclature.name,
+                'warehouse': str(sb.warehouse_id),
+                'warehouse_name': sb.warehouse.name,
+                'quantity': str(sb.quantity),
+            }
+            for sb in qs.order_by('quantity')[:10]
+        ]
+        return Response({'count': qs.count(), 'items': items})
+
 
 class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = StockMovementSerializer

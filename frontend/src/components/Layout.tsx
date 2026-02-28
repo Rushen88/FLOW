@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   Box, Drawer, List, ListItemButton, ListItemIcon, ListItemText,
@@ -14,6 +14,7 @@ import {
   SwapHoriz,
 } from '@mui/icons-material'
 import { useAuth } from '../contexts/AuthContext'
+import { useNotification } from '../contexts/NotificationContext'
 import api from '../api'
 
 const DRAWER_WIDTH = 260
@@ -55,10 +56,12 @@ export default function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, logout, switchOrganization, switchTradingPoint } = useAuth()
+  const { notify } = useNotification()
   const [drawerOpen, setDrawerOpen] = useState(true)
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [allOrgs, setAllOrgs] = useState<OrgOption[]>([])
   const [allTradingPoints, setAllTradingPoints] = useState<{ id: string; name: string }[]>([])
+  const lastNegativeReminderRef = useRef<number>(0)
 
   const currentWidth = drawerOpen ? DRAWER_WIDTH : DRAWER_COLLAPSED
 
@@ -82,6 +85,43 @@ export default function Layout() {
       }).catch(() => {})
     }
   }, [showTpSelector, user?.active_organization])
+
+  useEffect(() => {
+    if (!user) return
+
+    const effectiveTp = user.active_trading_point || user.trading_point
+    if (!effectiveTp) return
+
+    let isMounted = true
+
+    const checkNegativeStocks = async () => {
+      try {
+        const res = await api.get('/inventory/stock/negative-alerts/', {
+          params: { trading_point: effectiveTp },
+        })
+        const count = Number(res.data?.count || 0)
+        if (!isMounted || count <= 0) return
+
+        const now = Date.now()
+        if (now - lastNegativeReminderRef.current < 5 * 60 * 1000) return
+
+        lastNegativeReminderRef.current = now
+        notify(
+          `На складах торговой точки есть отрицательные остатки (${count} поз.). Проверьте инвентаризацию и корректировки.`,
+          'warning'
+        )
+      } catch {
+        // intentionally silent
+      }
+    }
+
+    checkNegativeStocks()
+    const timer = setInterval(checkNegativeStocks, 5 * 60 * 1000)
+    return () => {
+      isMounted = false
+      clearInterval(timer)
+    }
+  }, [user?.id, user?.active_trading_point, user?.trading_point, notify])
 
   const handleOrgSwitch = async (e: SelectChangeEvent<string>) => {
     const val = e.target.value

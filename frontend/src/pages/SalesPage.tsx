@@ -342,11 +342,19 @@ export default function SalesPage() {
       }
 
       if (editSale) {
-        await api.patch(`/sales/sales/${editSale.id}/`, payload)
+        const res = await api.patch(`/sales/sales/${editSale.id}/`, payload)
+        const warnings = (res.data && (res.data._warnings as string[] | undefined)) || []
         notify('Продажа обновлена')
+        if (warnings.length) {
+          notify(`Внимание:\n${warnings.join('\n')}`, 'warning')
+        }
       } else {
-        await api.post('/sales/sales/', payload)
+        const res = await api.post('/sales/sales/', payload)
+        const warnings = (res.data && (res.data._warnings as string[] | undefined)) || []
         notify('Продажа создана')
+        if (warnings.length) {
+          notify(`Внимание:\n${warnings.join('\n')}`, 'warning')
+        }
       }
       setSaleDlg(false)
       fetchSales()

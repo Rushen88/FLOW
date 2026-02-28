@@ -132,7 +132,9 @@ class SaleSerializer(serializers.ModelSerializer):
 
         # FIFO-списание со склада при завершённой и оплаченной продаже
         if sale.status == Sale.Status.COMPLETED and sale.is_paid:
-            do_sale_fifo_write_off(sale)
+            warnings = do_sale_fifo_write_off(sale)
+            if warnings:
+                self.context.setdefault('sale_warnings', []).extend(warnings)
 
         sync_sale_transaction(sale)
 
@@ -177,7 +179,9 @@ class SaleSerializer(serializers.ModelSerializer):
         was_completed_paid = (old_status == Sale.Status.COMPLETED and old_is_paid)
         now_completed_paid = (instance.status == Sale.Status.COMPLETED and instance.is_paid)
         if now_completed_paid and not was_completed_paid:
-            do_sale_fifo_write_off(instance)
+            warnings = do_sale_fifo_write_off(instance)
+            if warnings:
+                self.context.setdefault('sale_warnings', []).extend(warnings)
 
         sync_sale_transaction(instance)
 

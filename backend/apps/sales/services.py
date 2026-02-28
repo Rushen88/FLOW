@@ -103,9 +103,10 @@ def do_sale_fifo_write_off(sale):
     FIFO-списание товаров со склада для позиций продажи.
     Вызывается при завершении + оплате.
     """
-    from rest_framework.exceptions import ValidationError
     from apps.inventory.services import fifo_write_off, _update_stock_balance, InsufficientStockError
-    from apps.inventory.models import StockMovement
+    from apps.inventory.models import StockMovement, Batch
+
+    warnings = []
 
     for item in sale.items.select_related('nomenclature', 'batch').all():
         nom = item.nomenclature
@@ -121,46 +122,76 @@ def do_sale_fifo_write_off(sale):
             warehouse = Warehouse.objects.filter(
                 organization=sale.organization,
                 is_default_for_sales=True,
+                trading_point=sale.trading_point,
             ).first()
         if not warehouse:
-            raise ValidationError({
-                'items_data': [
-                    f'Для товара "{nom.name}" не найден склад для списания. '
-                    f'Укажите склад в позиции или настройте склад по умолчанию для продаж.'
-                ]
-            })
+            warehouse = Warehouse.objects.filter(
+                organization=sale.organization,
+                trading_point=sale.trading_point,
+            ).order_by('id').first()
+        if not warehouse:
+            warehouse = Warehouse.objects.filter(organization=sale.organization).order_by('id').first()
+        if not warehouse:
+            continue
 
-        try:
+        available_qty = (
+            Batch.objects.filter(
+                organization=sale.organization,
+                warehouse=warehouse,
+                nomenclature=nom,
+                remaining__gt=0,
+            ).aggregate(total=db_models.Sum('remaining'))['total']
+            or Decimal('0')
+        )
+
+        required_qty = Decimal(str(item.quantity))
+        qty_from_fifo = min(required_qty, available_qty)
+        qty_shortage = required_qty - qty_from_fifo
+
+        fifo_result = []
+        if qty_from_fifo > 0:
             fifo_result = fifo_write_off(
                 organization=sale.organization,
                 warehouse=warehouse,
                 nomenclature=nom,
-                quantity=item.quantity,
+                quantity=qty_from_fifo,
             )
-            total_cost = sum(r['qty'] * r['price'] for r in fifo_result)
-            item.cost_price = total_cost / item.quantity if item.quantity else Decimal('0')
-            item.save(update_fields=['cost_price'])
 
-            for row in fifo_result:
-                StockMovement.objects.create(
-                    organization=sale.organization,
-                    nomenclature=nom,
-                    movement_type=StockMovement.MovementType.SALE,
-                    warehouse_from=warehouse,
-                    batch=row['batch'],
-                    quantity=row['qty'],
-                    price=row['price'],
-                    notes=f'Продажа #{sale.number}',
-                )
-            _update_stock_balance(sale.organization, warehouse, nom, -item.quantity)
-        except InsufficientStockError as exc:
-            raise ValidationError({
-                'items_data': [
-                    f'Недостаточно остатка для товара "{nom.name}" на складе "{warehouse.name}": '
-                    f'требуется {item.quantity}, доступно {exc.available}. '
-                    f'Проведение продажи невозможно.'
-                ]
-            }) from exc
+        for row in fifo_result:
+            StockMovement.objects.create(
+                organization=sale.organization,
+                nomenclature=nom,
+                movement_type=StockMovement.MovementType.SALE,
+                warehouse_from=warehouse,
+                batch=row['batch'],
+                quantity=row['qty'],
+                price=row['price'],
+                notes=f'Продажа #{sale.number}',
+            )
+
+        if qty_shortage > 0:
+            StockMovement.objects.create(
+                organization=sale.organization,
+                nomenclature=nom,
+                movement_type=StockMovement.MovementType.SALE,
+                warehouse_from=warehouse,
+                batch=None,
+                quantity=qty_shortage,
+                price=nom.purchase_price,
+                notes=f'Продажа в минус #{sale.number}',
+            )
+            warnings.append(
+                f'Продажа в минус: "{nom.name}" на складе "{warehouse.name}". '
+                f'Продано {required_qty}, доступно {available_qty}, дефицит {qty_shortage}.'
+            )
+
+        total_cost = sum(r['qty'] * r['price'] for r in fifo_result) + (qty_shortage * nom.purchase_price)
+        item.cost_price = total_cost / required_qty if required_qty else Decimal('0')
+        item.save(update_fields=['cost_price'])
+
+        _update_stock_balance(sale.organization, warehouse, nom, -required_qty)
+
+    return warnings
 
 
 def sync_sale_transaction(sale):

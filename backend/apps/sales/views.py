@@ -1,4 +1,5 @@
-from rest_framework import viewsets, filters
+from rest_framework import viewsets, filters, status
+from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Sale, SaleItem, Order, OrderItem
 from .serializers import (
@@ -24,6 +25,29 @@ class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Sale.objects.select_related('customer', 'seller', 'trading_point')
         return _tenant_filter(qs, self.request.user, tp_field='trading_point')
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        data = serializer.data
+        warnings = serializer.context.get('sale_warnings') or []
+        if warnings:
+            data = {**data, '_warnings': warnings}
+        headers = self.get_success_headers(serializer.data)
+        return Response(data, status=status.HTTP_201_CREATED, headers=headers)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        data = serializer.data
+        warnings = serializer.context.get('sale_warnings') or []
+        if warnings:
+            data = {**data, '_warnings': warnings}
+        return Response(data)
 
 
 class SaleItemViewSet(viewsets.ModelViewSet):
