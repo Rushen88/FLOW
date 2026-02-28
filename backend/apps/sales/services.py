@@ -103,6 +103,7 @@ def do_sale_fifo_write_off(sale):
     FIFO-списание товаров со склада для позиций продажи.
     Вызывается при завершении + оплате.
     """
+    from rest_framework.exceptions import ValidationError
     from apps.inventory.services import fifo_write_off, _update_stock_balance, InsufficientStockError
     from apps.inventory.models import StockMovement
 
@@ -122,7 +123,12 @@ def do_sale_fifo_write_off(sale):
                 is_default_for_sales=True,
             ).first()
         if not warehouse:
-            continue
+            raise ValidationError({
+                'items_data': [
+                    f'Для товара "{nom.name}" не найден склад для списания. '
+                    f'Укажите склад в позиции или настройте склад по умолчанию для продаж.'
+                ]
+            })
 
         try:
             fifo_result = fifo_write_off(
@@ -147,8 +153,14 @@ def do_sale_fifo_write_off(sale):
                     notes=f'Продажа #{sale.number}',
                 )
             _update_stock_balance(sale.organization, warehouse, nom, -item.quantity)
-        except InsufficientStockError:
-            pass
+        except InsufficientStockError as exc:
+            raise ValidationError({
+                'items_data': [
+                    f'Недостаточно остатка для товара "{nom.name}" на складе "{warehouse.name}": '
+                    f'требуется {item.quantity}, доступно {exc.available}. '
+                    f'Проведение продажи невозможно.'
+                ]
+            }) from exc
 
 
 def sync_sale_transaction(sale):

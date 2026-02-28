@@ -675,6 +675,8 @@ npm run dev                       # → http://localhost:3000
 - Добавлена безопасная обработка через объект `organization` + явная `ValidationError`, если организация отсутствует.
 - **sales/serializers.py**: добавлена явная валидация `trading_point` в `SaleSerializer.create/update`, чтобы исключить `IntegrityError` (NOT NULL) и переводить проблему в контролируемый 400 ответ.
 - **frontend/SalesPage.tsx**: добавлена pre-submit валидация торговой точки (без выбранной точки сохранение не отправляется на backend).
+- **sales/services.py**: исправлена критичная логика проведения продажи при нехватке склада — `InsufficientStockError` больше не подавляется, а переводится в `ValidationError` (400). Продажа не проводится, если количество позиции больше остатка.
+- **sales/services.py**: добавлен запрет проведения продажи без склада списания (если не указан склад в позиции и не настроен `is_default_for_sales`).
 
 ### Критические исправления
 - **core/views.py**: `TradingPointViewSet`, `WarehouseViewSet`, `PaymentMethodViewSet` — READ-доступ открыт для всех аутентифицированных (раньше только owner/admin). Запись остаётся за owner/admin. Это исправляло: «Ошибка загрузки данных дашборда», «Ошибка загрузки остатков», «Server Error 500» на странице Продажи.
