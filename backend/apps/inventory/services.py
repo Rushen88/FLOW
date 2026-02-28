@@ -9,6 +9,7 @@
 - Списание товара (write_off_stock) — ручное списание с FIFO
 """
 
+from collections import defaultdict
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
@@ -27,6 +28,53 @@ class InsufficientStockError(Exception):
             f'Недостаточно "{nomenclature_name}" на складе: '
             f'запрошено {requested}, доступно {available}'
         )
+
+
+def build_stock_summary(organization, trading_point_id=None, warehouse_id=None):
+    """
+    Агрегированные остатки по номенклатуре для блока продаж.
+    Возвращает список словарей с total_qty и детализацией по складам.
+    """
+    qs = StockBalance.objects.filter(
+        organization=organization,
+        quantity__gt=0,
+    ).select_related('nomenclature', 'warehouse', 'warehouse__trading_point')
+    qs = qs.exclude(nomenclature__nomenclature_type='service')
+
+    if trading_point_id:
+        qs = qs.filter(warehouse__trading_point_id=trading_point_id)
+    if warehouse_id:
+        qs = qs.filter(warehouse_id=warehouse_id)
+
+    groups = defaultdict(
+        lambda: {
+            'nomenclature': '',
+            'nomenclature_name': '',
+            'total_qty': Decimal('0'),
+            'warehouses': [],
+        }
+    )
+
+    for stock_balance in qs:
+        key = str(stock_balance.nomenclature_id)
+        groups[key]['nomenclature'] = key
+        groups[key]['nomenclature_name'] = stock_balance.nomenclature.name
+        groups[key]['total_qty'] += stock_balance.quantity
+        groups[key]['warehouses'].append({
+            'warehouse': str(stock_balance.warehouse_id),
+            'warehouse_name': stock_balance.warehouse.name,
+            'trading_point': str(stock_balance.warehouse.trading_point_id) if stock_balance.warehouse.trading_point_id else '',
+            'is_default_for_sales': bool(getattr(stock_balance.warehouse, 'is_default_for_sales', False)),
+            'qty': str(stock_balance.quantity),
+        })
+
+    return [{
+        'nomenclature': value['nomenclature'],
+        'nomenclature_name': value['nomenclature_name'],
+        'total_qty': str(value['total_qty']),
+        'total_quantity': str(value['total_qty']),
+        'warehouses': value['warehouses'],
+    } for value in groups.values()]
 
 
 def _update_stock_balance(organization, warehouse, nomenclature, qty_delta: Decimal):
@@ -527,3 +575,169 @@ def transfer_stock(
     _update_stock_balance(organization, warehouse_to, nomenclature, quantity)
 
     return batch
+
+
+@transaction.atomic
+def correct_bouquet_stock(
+    organization,
+    bouquet_nomenclature,
+    warehouse,
+    rows,
+    user=None,
+):
+    """
+    Коррекция состава букета в остатках.
+
+    rows: [{
+        'nomenclature': Nomenclature,
+        'writeoff_qty': Decimal,
+        'return_qty': Decimal,
+        'add_qty': Decimal,
+        'reason': str,
+        'return_warehouse': Warehouse|None,
+        'add_warehouse': Warehouse|None,
+    }]
+    """
+    fifo_result = fifo_write_off(
+        organization=organization,
+        warehouse=warehouse,
+        nomenclature=bouquet_nomenclature,
+        quantity=Decimal('1'),
+        user=user,
+    )
+
+    bouquet_cost = fifo_result[0]['price'] if fifo_result else bouquet_nomenclature.purchase_price
+
+    for row in fifo_result:
+        StockMovement.objects.create(
+            organization=organization,
+            nomenclature=bouquet_nomenclature,
+            movement_type=StockMovement.MovementType.WRITE_OFF,
+            warehouse_from=warehouse,
+            batch=row['batch'],
+            quantity=row['qty'],
+            price=row['price'],
+            user=user,
+            notes=f'Коррекция букета: {bouquet_nomenclature.name}',
+        )
+    _update_stock_balance(organization, warehouse, bouquet_nomenclature, Decimal('-1'))
+
+    for row in rows:
+        nomenclature = row['nomenclature']
+        if nomenclature.nomenclature_type == 'service':
+            continue
+
+        writeoff_qty = Decimal(str(row.get('writeoff_qty', 0) or 0))
+        return_qty = Decimal(str(row.get('return_qty', 0) or 0))
+        add_qty = Decimal(str(row.get('add_qty', 0) or 0))
+        reason = row.get('reason', 'other')
+
+        if return_qty > 0:
+            return_wh = row.get('return_warehouse') or warehouse
+            batch = Batch.objects.create(
+                organization=organization,
+                nomenclature=nomenclature,
+                warehouse=return_wh,
+                purchase_price=nomenclature.purchase_price,
+                quantity=return_qty,
+                remaining=return_qty,
+                arrival_date=timezone.now().date(),
+                notes=f'Возврат из коррекции: {bouquet_nomenclature.name}',
+            )
+            StockMovement.objects.create(
+                organization=organization,
+                nomenclature=nomenclature,
+                movement_type=StockMovement.MovementType.RETURN,
+                warehouse_to=return_wh,
+                batch=batch,
+                quantity=return_qty,
+                price=nomenclature.purchase_price,
+                user=user,
+                notes=f'Возврат из коррекции: {bouquet_nomenclature.name}',
+            )
+            _update_stock_balance(organization, return_wh, nomenclature, return_qty)
+
+        if writeoff_qty > 0:
+            try:
+                write_off_result = fifo_write_off(
+                    organization=organization,
+                    warehouse=warehouse,
+                    nomenclature=nomenclature,
+                    quantity=writeoff_qty,
+                    user=user,
+                )
+                for write_off_row in write_off_result:
+                    StockMovement.objects.create(
+                        organization=organization,
+                        nomenclature=nomenclature,
+                        movement_type=StockMovement.MovementType.WRITE_OFF,
+                        warehouse_from=warehouse,
+                        batch=write_off_row['batch'],
+                        quantity=write_off_row['qty'],
+                        price=write_off_row['price'],
+                        write_off_reason=reason,
+                        user=user,
+                        notes=f'Списание из коррекции: {bouquet_nomenclature.name}',
+                    )
+                _update_stock_balance(organization, warehouse, nomenclature, -writeoff_qty)
+            except InsufficientStockError:
+                StockMovement.objects.create(
+                    organization=organization,
+                    nomenclature=nomenclature,
+                    movement_type=StockMovement.MovementType.WRITE_OFF,
+                    warehouse_from=warehouse,
+                    quantity=writeoff_qty,
+                    price=nomenclature.purchase_price,
+                    write_off_reason=reason,
+                    user=user,
+                    notes=f'Списание из коррекции: {bouquet_nomenclature.name}',
+                )
+                _update_stock_balance(organization, warehouse, nomenclature, -writeoff_qty)
+
+        if add_qty > 0:
+            add_wh = row.get('add_warehouse') or warehouse
+            add_fifo = fifo_write_off(
+                organization=organization,
+                warehouse=add_wh,
+                nomenclature=nomenclature,
+                quantity=add_qty,
+                user=user,
+            )
+            for add_row in add_fifo:
+                StockMovement.objects.create(
+                    organization=organization,
+                    nomenclature=nomenclature,
+                    movement_type=StockMovement.MovementType.ASSEMBLY,
+                    warehouse_from=add_wh,
+                    batch=add_row['batch'],
+                    quantity=add_row['qty'],
+                    price=add_row['price'],
+                    user=user,
+                    notes=f'Добавление в коррекцию: {bouquet_nomenclature.name}',
+                )
+            _update_stock_balance(organization, add_wh, nomenclature, -add_qty)
+
+    corrected_batch = Batch.objects.create(
+        organization=organization,
+        nomenclature=bouquet_nomenclature,
+        warehouse=warehouse,
+        purchase_price=bouquet_cost,
+        quantity=Decimal('1'),
+        remaining=Decimal('1'),
+        arrival_date=timezone.now().date(),
+        notes=f'Скорректированный букет: {bouquet_nomenclature.name}',
+    )
+    StockMovement.objects.create(
+        organization=organization,
+        nomenclature=bouquet_nomenclature,
+        movement_type=StockMovement.MovementType.RECEIPT,
+        warehouse_to=warehouse,
+        batch=corrected_batch,
+        quantity=Decimal('1'),
+        price=bouquet_cost,
+        user=user,
+        notes=f'Коррекция букета: {bouquet_nomenclature.name}',
+    )
+    _update_stock_balance(organization, warehouse, bouquet_nomenclature, Decimal('1'))
+
+    return corrected_batch

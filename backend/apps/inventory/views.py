@@ -1,5 +1,4 @@
 from decimal import Decimal
-from django.utils import timezone
 from django.db import transaction as db_transaction
 
 from rest_framework import viewsets, filters, status
@@ -14,7 +13,7 @@ from .serializers import (
 )
 from .services import (
     process_batch_receipt, assemble_bouquet, disassemble_bouquet,
-    write_off_stock, transfer_stock, InsufficientStockError, fifo_write_off, _update_stock_balance,
+    write_off_stock, transfer_stock, InsufficientStockError, build_stock_summary, correct_bouquet_stock,
 )
 from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter
 
@@ -141,41 +140,12 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             if tp:
                 trading_point_id = str(tp.id)
 
-        qs = StockBalance.objects.filter(
-            organization=org, quantity__gt=0,
-        ).select_related('nomenclature', 'warehouse', 'warehouse__trading_point')
-        qs = qs.exclude(nomenclature__nomenclature_type='service')
-
-        if trading_point_id:
-            qs = qs.filter(warehouse__trading_point_id=trading_point_id)
-
         warehouse_id = request.query_params.get('warehouse')
-        if warehouse_id:
-            qs = qs.filter(warehouse_id=warehouse_id)
-
-        # Group by nomenclature
-        from collections import defaultdict
-        groups = defaultdict(lambda: {'nomenclature': '', 'nomenclature_name': '', 'total_qty': Decimal('0'), 'warehouses': []})
-        for sb in qs:
-            key = str(sb.nomenclature_id)
-            groups[key]['nomenclature'] = key
-            groups[key]['nomenclature_name'] = sb.nomenclature.name
-            groups[key]['total_qty'] += sb.quantity
-            groups[key]['warehouses'].append({
-                'warehouse': str(sb.warehouse_id),
-                'warehouse_name': sb.warehouse.name,
-                'trading_point': str(sb.warehouse.trading_point_id) if sb.warehouse.trading_point_id else '',
-                'is_default_for_sales': bool(getattr(sb.warehouse, 'is_default_for_sales', False)),
-                'qty': str(sb.quantity),
-            })
-
-        result = [{
-            'nomenclature': v['nomenclature'],
-            'nomenclature_name': v['nomenclature_name'],
-            'total_qty': str(v['total_qty']),
-            'total_quantity': str(v['total_qty']),
-            'warehouses': v['warehouses'],
-        } for v in groups.values()]
+        result = build_stock_summary(
+            organization=org,
+            trading_point_id=trading_point_id,
+            warehouse_id=warehouse_id,
+        )
         return Response(result)
 
 
@@ -340,9 +310,11 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 components = []
                 for c in data.get('components', []):
                     comp_nom = Nomenclature.objects.get(pk=c['nomenclature'])
+                    _validate_org_fk(comp_nom, org, 'Компонент')
                     comp_wh = wh_from
                     if c.get('warehouse'):
                         comp_wh = Warehouse.objects.get(pk=c['warehouse'])
+                    _validate_org_fk(comp_wh, org, 'Склад компонента')
                     components.append({
                         'nomenclature': comp_nom,
                         'quantity': Decimal(str(c['quantity'])),
@@ -361,6 +333,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                     comp_wh = comp.get('warehouse') or wh_from
                     if override.get('warehouse'):
                         comp_wh = Warehouse.objects.get(pk=override['warehouse'])
+                    _validate_org_fk(comp_wh, org, 'Склад компонента')
                     updated_components.append({
                         'nomenclature': comp['nomenclature'],
                         'quantity': Decimal(str(override.get('quantity', comp['quantity']))),
@@ -453,6 +426,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             return_items = []
             for item in data.get('return_items', []):
                 nom = Nomenclature.objects.get(pk=item['nomenclature'])
+                _validate_org_fk(nom, org, 'Компонент возврата')
                 return_items.append({
                     'nomenclature': nom,
                     'quantity': Decimal(str(item['quantity'])),
@@ -461,6 +435,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             writeoff_items = []
             for item in data.get('writeoff_items', []):
                 nom = Nomenclature.objects.get(pk=item['nomenclature'])
+                _validate_org_fk(nom, org, 'Компонент списания')
                 writeoff_items.append({
                     'nomenclature': nom,
                     'quantity': Decimal(str(item['quantity'])),
@@ -517,152 +492,35 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             _validate_org_fk(bouquet_nom, org, 'Букет')
             _validate_org_fk(warehouse, org, 'Склад')
 
-            # 1) списать 1 букет
-            fifo_result = fifo_write_off(
-                organization=org,
-                warehouse=warehouse,
-                nomenclature=bouquet_nom,
-                quantity=Decimal('1'),
-                user=request.user,
-            )
-            bouquet_cost = fifo_result[0]['price'] if fifo_result else bouquet_nom.purchase_price
-            for r in fifo_result:
-                StockMovement.objects.create(
-                    organization=org,
-                    nomenclature=bouquet_nom,
-                    movement_type=StockMovement.MovementType.WRITE_OFF,
-                    warehouse_from=warehouse,
-                    batch=r['batch'],
-                    quantity=r['qty'],
-                    price=r['price'],
-                    user=request.user,
-                    notes=f'Коррекция букета: {bouquet_nom.name}',
-                )
-            _update_stock_balance(org, warehouse, bouquet_nom, Decimal('-1'))
-
-            # 2) обработать строки коррекции
+            rows = []
             for row in data.get('rows', []):
                 nom = Nomenclature.objects.get(pk=row['nomenclature'])
-                if nom.nomenclature_type == 'service':
-                    continue
-                writeoff_qty = Decimal(str(row.get('writeoff_qty', 0) or 0))
-                return_qty = Decimal(str(row.get('return_qty', 0) or 0))
-                add_qty = Decimal(str(row.get('add_qty', 0) or 0))
+                _validate_org_fk(nom, org, 'Компонент коррекции')
+                return_wh = None
+                add_wh = None
+                if row.get('return_warehouse'):
+                    return_wh = Warehouse.objects.get(pk=row['return_warehouse'])
+                    _validate_org_fk(return_wh, org, 'Склад возврата')
+                if row.get('add_warehouse'):
+                    add_wh = Warehouse.objects.get(pk=row['add_warehouse'])
+                    _validate_org_fk(add_wh, org, 'Склад добавления')
+                rows.append({
+                    'nomenclature': nom,
+                    'writeoff_qty': Decimal(str(row.get('writeoff_qty', 0) or 0)),
+                    'return_qty': Decimal(str(row.get('return_qty', 0) or 0)),
+                    'add_qty': Decimal(str(row.get('add_qty', 0) or 0)),
+                    'reason': row.get('reason', 'other'),
+                    'return_warehouse': return_wh,
+                    'add_warehouse': add_wh,
+                })
 
-                if return_qty > 0 and nom.nomenclature_type != 'service':
-                    return_wh = warehouse
-                    if row.get('return_warehouse'):
-                        return_wh = Warehouse.objects.get(pk=row['return_warehouse'])
-                    batch = Batch.objects.create(
-                        organization=org,
-                        nomenclature=nom,
-                        warehouse=return_wh,
-                        purchase_price=nom.purchase_price,
-                        quantity=return_qty,
-                        remaining=return_qty,
-                        arrival_date=timezone.now().date(),
-                        notes=f'Возврат из коррекции: {bouquet_nom.name}',
-                    )
-                    StockMovement.objects.create(
-                        organization=org,
-                        nomenclature=nom,
-                        movement_type=StockMovement.MovementType.RETURN,
-                        warehouse_to=return_wh,
-                        batch=batch,
-                        quantity=return_qty,
-                        price=nom.purchase_price,
-                        user=request.user,
-                        notes=f'Возврат из коррекции: {bouquet_nom.name}',
-                    )
-                    _update_stock_balance(org, return_wh, nom, return_qty)
-
-                if writeoff_qty > 0:
-                    # FIFO-списание (вместо простого StockMovement)
-                    try:
-                        wo_result = fifo_write_off(
-                            organization=org,
-                            warehouse=warehouse,
-                            nomenclature=nom,
-                            quantity=writeoff_qty,
-                            user=request.user,
-                        )
-                        for r in wo_result:
-                            StockMovement.objects.create(
-                                organization=org,
-                                nomenclature=nom,
-                                movement_type=StockMovement.MovementType.WRITE_OFF,
-                                warehouse_from=warehouse,
-                                batch=r['batch'],
-                                quantity=r['qty'],
-                                price=r['price'],
-                                write_off_reason=row.get('reason', 'other'),
-                                user=request.user,
-                                notes=f'Списание из коррекции: {bouquet_nom.name}',
-                            )
-                        _update_stock_balance(org, warehouse, nom, -writeoff_qty)
-                    except InsufficientStockError:
-                        # Если не хватает на FIFO — записываем обычное движение
-                        StockMovement.objects.create(
-                            organization=org,
-                            nomenclature=nom,
-                            movement_type=StockMovement.MovementType.WRITE_OFF,
-                            warehouse_from=warehouse,
-                            quantity=writeoff_qty,
-                            price=nom.purchase_price,
-                            write_off_reason=row.get('reason', 'other'),
-                            user=request.user,
-                            notes=f'Списание из коррекции: {bouquet_nom.name}',
-                        )
-                        _update_stock_balance(org, warehouse, nom, -writeoff_qty)
-
-                if add_qty > 0 and nom.nomenclature_type != 'service':
-                    add_wh = warehouse
-                    if row.get('add_warehouse'):
-                        add_wh = Warehouse.objects.get(pk=row['add_warehouse'])
-                    add_fifo = fifo_write_off(
-                        organization=org,
-                        warehouse=add_wh,
-                        nomenclature=nom,
-                        quantity=add_qty,
-                        user=request.user,
-                    )
-                    for r in add_fifo:
-                        StockMovement.objects.create(
-                            organization=org,
-                            nomenclature=nom,
-                            movement_type=StockMovement.MovementType.ASSEMBLY,
-                            warehouse_from=add_wh,
-                            batch=r['batch'],
-                            quantity=r['qty'],
-                            price=r['price'],
-                            user=request.user,
-                            notes=f'Добавление в коррекцию: {bouquet_nom.name}',
-                        )
-                    _update_stock_balance(org, add_wh, nom, -add_qty)
-
-            # 3) вернуть скорректированный букет на склад
-            corrected_batch = Batch.objects.create(
+            correct_bouquet_stock(
                 organization=org,
-                nomenclature=bouquet_nom,
+                bouquet_nomenclature=bouquet_nom,
                 warehouse=warehouse,
-                purchase_price=bouquet_cost,
-                quantity=Decimal('1'),
-                remaining=Decimal('1'),
-                arrival_date=timezone.now().date(),
-                notes=f'Скорректированный букет: {bouquet_nom.name}',
-            )
-            StockMovement.objects.create(
-                organization=org,
-                nomenclature=bouquet_nom,
-                movement_type=StockMovement.MovementType.RECEIPT,
-                warehouse_to=warehouse,
-                batch=corrected_batch,
-                quantity=Decimal('1'),
-                price=bouquet_cost,
+                rows=rows,
                 user=request.user,
-                notes=f'Коррекция букета: {bouquet_nom.name}',
             )
-            _update_stock_balance(org, warehouse, bouquet_nom, Decimal('1'))
 
             return Response({
                 'status': 'ok',
