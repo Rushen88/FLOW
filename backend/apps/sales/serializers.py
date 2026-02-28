@@ -74,6 +74,35 @@ def _generate_sale_number(organization):
         return str(Sale.objects.filter(organization=organization).count() + 1)
 
 
+def _generate_order_number(organization):
+    """
+    Генерация безопасного числового номера заказа.
+    Использует IntegerField-семантику: MAX + 1 с select_for_update.
+    """
+    max_num = (
+        Order.objects.select_for_update()
+        .filter(organization=organization, number__isnull=False)
+        .exclude(number='')
+        .filter(number__regex=r'^\d+$')
+        .annotate(num_int=db_models.functions.Cast('number', db_models.IntegerField()))
+        .aggregate(m=Max('num_int'))['m']
+    )
+    try:
+        return str((max_num or 0) + 1)
+    except (ValueError, TypeError):
+        return str(Order.objects.filter(organization=organization).count() + 1)
+
+
+def _lock_organization_row(organization_id):
+    """
+    Сериализация генерации номеров внутри организации.
+    Нужна, чтобы избежать гонок даже при пустой таблице продаж/заказов.
+    """
+    from apps.core.models import Organization
+
+    return Organization.objects.select_for_update().get(pk=organization_id)
+
+
 class SaleSerializer(serializers.ModelSerializer):
     items = SaleItemSerializer(many=True, read_only=True)
     items_data = SaleItemWriteSerializer(many=True, write_only=True, required=False)
@@ -110,6 +139,8 @@ class SaleSerializer(serializers.ModelSerializer):
                 tp = _resolve_tp(request.user)
                 if tp:
                     validated_data['trading_point'] = tp
+
+        _lock_organization_row(validated_data['organization_id'])
 
         sale = Sale.objects.create(**validated_data)
 
@@ -372,6 +403,52 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def get_customer_name(self, obj):
         return str(obj.customer) if obj.customer else ''
+
+    @db_transaction.atomic
+    def create(self, validated_data):
+        _lock_organization_row(validated_data['organization_id'])
+
+        if not validated_data.get('number'):
+            validated_data['number'] = _generate_order_number(validated_data['organization'])
+
+        order = Order.objects.create(**validated_data)
+
+        OrderStatusHistory.objects.create(
+            order=order,
+            old_status='',
+            new_status=order.status,
+            changed_by=self.context.get('request').user if self.context.get('request') else None,
+            comment='Создание заказа',
+        )
+        return order
+
+    @db_transaction.atomic
+    def update(self, instance, validated_data):
+        old_status = instance.status
+
+        new_status = validated_data.get('status', old_status)
+        if new_status != old_status and not instance.can_transition_to(new_status):
+            allowed = instance.ALLOWED_TRANSITIONS.get(old_status, [])
+            allowed_labels = [instance.Status(s).label for s in allowed]
+            raise serializers.ValidationError({
+                'status': (
+                    f'Недопустимый переход из "{instance.get_status_display()}" в '
+                    f'"{instance.Status(new_status).label}". '
+                    f'Допустимые переходы: {", ".join(allowed_labels) or "нет"}'
+                )
+            })
+
+        order = super().update(instance, validated_data)
+
+        if new_status != old_status:
+            OrderStatusHistory.objects.create(
+                order=order,
+                old_status=old_status,
+                new_status=new_status,
+                changed_by=self.context.get('request').user if self.context.get('request') else None,
+                comment='Изменение статуса через API',
+            )
+        return order
 
 
 class OrderListSerializer(serializers.ModelSerializer):

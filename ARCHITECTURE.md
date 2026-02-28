@@ -777,7 +777,7 @@ npm run dev                       # → http://localhost:3000
 | 4 | ~~Нет Code Splitting~~ | frontend/App.tsx | ✅ FIXED |
 | 5 | ~~Нет Error Boundary~~ | frontend/App.tsx | ✅ FIXED |
 | 6 | ~~UniqueConstraints отсутствуют~~ | core, inventory, customers, marketing | ✅ FIXED |
-| 7 | Возможные race conditions при генерации номеров (sale/order) | sales/serializers.py | HIGH |
+| 7 | ~~Возможные race conditions при генерации номеров (sale/order)~~ | sales/serializers.py + sales/models.py | ✅ FIXED |
 | 8 | Бизнес-логика в сериализаторах вместо services | sales, inventory | MEDIUM |
 | 9 | Нет audit-лога изменений (кто, что, когда) | Все приложения | MEDIUM |
 | 10 | Нет системы уведомлений (email/push) | Проект | MEDIUM |
@@ -852,3 +852,11 @@ npm run dev                       # → http://localhost:3000
 - ✅ Устранён дрейф схемы БД: миграции constraints добавлены в репозиторий (`core.0007`, `customers.0002`, `inventory.0003`, `marketing.0002`)
 - ✅ Подтверждена синхронизация моделей и миграций: `manage.py makemigrations` → `No changes detected`
 - ✅ Продакшен-деплой выполнен на сервер `130.49.146.199`, контейнеры `backend/frontend/db` в статусе `Up`
+
+#### Sales hardening (2026-03-01)
+
+- ✅ Добавлена сериализация генерации номеров через lock строки `Organization` (`select_for_update`) для исключения гонок даже при пустых таблицах
+- ✅ Реализована автогенерация номера заказа в `OrderSerializer.create()`
+- ✅ Добавлена валидация допустимых переходов статуса заказа в `OrderSerializer.update()`
+- ✅ Добавлено журналирование переходов статусов через `OrderStatusHistory` при create/update
+- ✅ Добавлены DB-инварианты уникальности номера в пределах организации: `unique_sale_number_per_org`, `unique_order_number_per_org`

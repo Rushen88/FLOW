@@ -53,6 +53,13 @@ class Sale(models.Model):
         verbose_name = 'Продажа'
         verbose_name_plural = 'Продажи'
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'number'],
+                name='unique_sale_number_per_org',
+                condition=models.Q(number__gt=''),
+            ),
+        ]
 
     def __str__(self):
         return f'Чек #{self.number} ({self.total} руб.)'
@@ -187,6 +194,13 @@ class Order(models.Model):
         verbose_name = 'Заказ'
         verbose_name_plural = 'Заказы'
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'number'],
+                name='unique_order_number_per_org',
+                condition=models.Q(number__gt=''),
+            ),
+        ]
 
     def __str__(self):
         return f'Заказ #{self.number}'
