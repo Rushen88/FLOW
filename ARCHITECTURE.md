@@ -143,7 +143,7 @@ FLOW/
 
 | Модель | Описание | Ключевые поля |
 |--------|----------|---------------|
-| **Sale** | Чек продажи | trading_point → TradingPoint, seller → User, customer → Customer, status (open/completed/cancelled), subtotal, discount_percent, discount_amount, total, payment_method → PaymentMethod |
+| **Sale** | Чек продажи | trading_point → TradingPoint, seller → User, customer → Customer, cash_shift → CashShift, status (open/completed/cancelled), subtotal, discount_percent, discount_amount, total, payment_method → PaymentMethod, promo_code → PromoCode, used_bonuses, earned_bonuses |
 | **SaleItem** | Позиция чека | sale → Sale, nomenclature → Nomenclature, batch → Batch, quantity, price, discount_percent, total |
 | **Order** | Заказ | trading_point, customer, status (new → confirmed → in_assembly → assembled → on_delivery → delivered → completed | cancelled), source (7 типов), recipient_*, delivery_*, prepayment_amount, remaining_amount, florist → User, courier → Courier, promo_code → PromoCode |
 | **OrderItem** | Позиция заказа | order → Order, nomenclature, quantity, price, is_custom_bouquet, custom_description |
@@ -257,7 +257,7 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
 | core | `/api/core/` | organizations (/tenant-metrics), users (/me, /me/change-password, /me/set-active-org, /{id}/set-password), trading-points, warehouses, payment-methods, tenant-contacts, tenant-payments, tenant-notes, platform-admins (/set-password, /toggle-active) |
 | nomenclature | `/api/nomenclature/` | groups, measure-units, nomenclature, bouquet-templates, bouquet-components |
 | inventory | `/api/inventory/` | batches, stock (readonly), movements, inventory-documents, inventory-items, reserves |
-| sales | `/api/sales/` | sales, sale-items, orders, order-items |
+| sales | `/api/sales/` | sales (`/shift-report/` — сводка по кассовым сменам), sale-items, orders, order-items |
 | customers | `/api/customers/` | groups, customers, important-dates, addresses |
 | suppliers | `/api/suppliers/` | suppliers, supplier-nomenclature, orders, order-items, claims |
 | staff | `/api/staff/` | positions, employees, payroll-schemes, shifts, salary-accruals |
@@ -280,7 +280,7 @@ new → confirmed → in_assembly → assembled → on_delivery → delivered �
   /              → DashboardPage       (дашборд со статистикой)
   /nomenclature  → NomenclaturePage    (CRUD-таблица товаров)
   /inventory     → InventoryPage       (остатки, движения, партии)
-  /sales         → SalesPage           (список продаж)
+  /sales         → SalesPage           (вкладки: «Список продаж» | «Отчёты по сменам»)
   /orders        → OrdersPage          (список заказов)
   /customers     → CustomersPage       (CRUD клиентов)
   /suppliers     → SuppliersPage       (список поставщиков)
@@ -1168,3 +1168,49 @@ npm run dev                       # → http://localhost:3000
 - **DDoS/Bruteforce Защита:** В Django Rest Framework активирован встроенный Throttling Engine: 1000 запросов/минута для авторизованных пользователей и 30/мин для неавторизованных, защищающий систему от базовых brute-force атак на эндпоинты /api/auth/token/.
 - **Gunicorn Workers & Threads:** Контейнер переведен в режим многопоточности (--workers 3 --threads 2 --worker-class gthread), обеспечивающий асинхронную обработку медленных запросов без блокировки Worker-процессов.
 - **Enterprise Security Headers:** В конфигурацию бэкенда вшиты строгие заголовки X_FRAME_OPTIONS = 'DENY' (защита от Clickjacking) и SECURE_CONTENT_TYPE_NOSNIFF, необходимые по стандартам безопасной разработки (OWASP).
+
+## 16. Bugfix & Feature: Sales 500 Fix + Shift Report
+
+### Баг: Phantom Migration (sales.0005)
+Производственная база данных содержала запись в `django_migrations` о применённой миграции `sales.0005_sale_order_promo_bonuses`, однако реальные DDL-команды (`ALTER TABLE`) не были выполнены. Это привело к HTTP 500 (`ProgrammingError: column sales.promo_code_id does not exist`) при любом обращении к `/api/sales/sales/`.
+
+**Исправление** — выполнены RAW SQL команды напрямую в производственной PostgreSQL:
+```sql
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS promo_code_id UUID REFERENCES promo_codes(id) ON DELETE SET NULL;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS used_bonuses NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS earned_bonuses NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS used_bonuses NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS earned_bonuses NUMERIC(12,2) DEFAULT 0;
+```
+
+### Новый endpoint: `/api/sales/sales/shift-report/`
+`GET` — агрегированный отчёт по кассовым сменам (`CashShift`).
+
+**Query-параметры:** `trading_point`, `date_from`, `date_to`
+
+**Поля ответа на каждую смену:**
+| Поле | Описание |
+|------|----------|
+| `shift_id` | UUID кассовой смены |
+| `trading_point_name` | Название торговой точки |
+| `opened_at` / `closed_at` | Время открытия/закрытия |
+| `opened_by` / `closed_by` | ФИО открывшего/закрывшего |
+| `status` | `open` / `closed` |
+| `sales_count` | Количество пробитых чеков |
+| `revenue` | Выручка (сумма `Sale.total`) |
+| `cost` | Себестоимость (сумма `SaleItem.cost_price × quantity`) |
+| `gross_profit` | Валовая прибыль (`revenue − cost`) |
+| `margin_pct` | Маржинальность, % |
+| `avg_check` | Средний чек |
+| `balance_at_open` | Остаток на кассе при открытии |
+| `actual_balance_at_close` | Фактический остаток при закрытии |
+
+### Фронтенд — SalesPage (рефакторинг)
+Страница `SalesPage` реструктурирована с добавлением двух вкладок MUI `Tabs`:
+
+| Вкладка | Содержимое |
+|---------|------------|
+| **Список продаж** | Фильтры, таблица `DataTable`, создание/редактирование/просмотр чеков |
+| **Отчёты по сменам** | Фильтры по дате и точке, 6 KPI-карточек сводки (выручка, себестоимость, прибыль, маржа%, средний чек, чеков), таблица смен с раскрываемыми строками (детализация продаж по смене) |
+
+
