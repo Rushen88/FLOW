@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     dependencies = [
         ('inventory', '0004_stockmovement_sale_batch_idx_batch_fifo_and_more'),
-        ('core', '0003_warehouse_is_default_for_sales'),
+        ('core', '0004_paymentmethod_wallet_warehouse_is_default'),
         ('nomenclature', '0001_initial'),
     ]
 

@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     dependencies = [
         ('finance', '0006_cashshift_unique_open_shift'),
-        ('core', '0003_warehouse_is_default_for_sales'),
+        ('core', '0004_paymentmethod_wallet_warehouse_is_default'),
     ]
 
     operations = [

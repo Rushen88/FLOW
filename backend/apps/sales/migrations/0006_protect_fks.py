@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     dependencies = [
         ('sales', '0005_sale_order_promo_bonuses'),
-        ('core', '0003_warehouse_is_default_for_sales'),
+        ('core', '0004_paymentmethod_wallet_warehouse_is_default'),
     ]
 
     operations = [
