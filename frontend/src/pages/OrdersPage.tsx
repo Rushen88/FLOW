@@ -36,7 +36,7 @@ interface OrderItem {
   is_custom_bouquet: boolean; custom_description: string
   photo: string | null; nomenclature_name: string
 }
-interface StatusEntry { id: string; status: string; created_at: string; comment?: string }
+interface StatusEntry { id: string; old_status: string; new_status: string; created_at: string; comment?: string }
 interface Ref { id: string; name: string }
 interface NomRef { id: string; name: string; retail_price: string }
 interface CustomerRef { id: string; full_name?: string; first_name?: string; last_name?: string }
@@ -798,14 +798,14 @@ export default function OrdersPage() {
                 <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>История статусов</Typography>
                 <Box sx={{ display: "flex", flexDirection: 'column', gap: 1 }}>
                   {detailOrder.status_history.map((entry, idx) => {
-                    const st = STATUS_CHOICES.find(s => s.value === entry.status)
+                    const st = STATUS_CHOICES.find(s => s.value === entry.new_status)
                     return (
                       <Box key={entry.id || idx} sx={{ display: "flex", alignItems: 'flex-start', gap: 1.5 }}>
                         <Chip
-                          label={st?.label || entry.status}
+                          label={st?.label || entry.new_status}
                           size="small"
                           color={st?.color || 'default'}
-                          icon={statusIcon(entry.status)}
+                          icon={statusIcon(entry.new_status)}
                         />
                         <Box>
                           <Typography variant="caption" color="text.secondary">{fmtDateTime(entry.created_at)}</Typography>

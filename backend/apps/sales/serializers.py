@@ -270,7 +270,9 @@ class SaleSerializer(serializers.ModelSerializer):
                 warnings = do_sale_fifo_write_off(instance)
                 if warnings:
                     self.context.setdefault('sale_warnings', []).extend(warnings)
-                if instance.customer:
+                # P4-CRITICAL: Обновляем статистику ТОЛЬКО при переприменении после отката
+                # (sale уже была completed). Переход open→completed обрабатывается внешним блоком.
+                if was_completed_paid and instance.customer:
                     update_customer_stats(instance, instance.total, 1)
 
         # FIFO-списание при переходе в completed + is_paid
@@ -361,8 +363,11 @@ class OrderSerializer(serializers.ModelSerializer):
         for it in items:
             subtotal += it.total
         order.subtotal = subtotal
-        discount = order.discount_percent or Decimal('0')
-        order.total = subtotal * (Decimal('1') - discount / Decimal('100'))
+        # P4-HIGH: Order имеет discount_amount (сумма), а не discount_percent;
+        # также учитываем delivery_cost
+        discount_amount = order.discount_amount or Decimal('0')
+        delivery_cost = order.delivery_cost or Decimal('0')
+        order.total = max(subtotal - discount_amount + delivery_cost, Decimal('0'))
         order.save(update_fields=['subtotal', 'total'])
 
     def _create_order_items(self, order, items_data):
