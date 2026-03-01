@@ -199,7 +199,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     filterset_fields = ['movement_type', 'warehouse_from', 'warehouse_to']
 
     def get_queryset(self):
-        qs = StockMovement.objects.select_related('nomenclature')
+        qs = StockMovement.objects.select_related('nomenclature', 'warehouse_from', 'warehouse_to')
         return _tenant_filter(qs, self.request.user)
 
     @action(detail=False, methods=['post'], url_path='write-off')
@@ -581,7 +581,7 @@ class InventoryDocumentViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     queryset = InventoryDocument.objects.all()
 
     def get_queryset(self):
-        qs = InventoryDocument.objects.prefetch_related('items')
+        qs = InventoryDocument.objects.select_related('warehouse').prefetch_related('items', 'items__nomenclature')
         return _tenant_filter(qs, self.request.user)
 
 

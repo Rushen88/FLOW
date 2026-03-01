@@ -30,7 +30,7 @@ class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         return SaleSerializer
 
     def get_queryset(self):
-        qs = Sale.objects.select_related('customer', 'seller', 'trading_point')
+        qs = Sale.objects.select_related('customer', 'seller', 'trading_point').prefetch_related('items', 'items__nomenclature')
         return _tenant_filter(qs, self.request.user, tp_field='trading_point')
 
     def create(self, request, *args, **kwargs):
@@ -171,7 +171,7 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         return OrderSerializer
 
     def get_queryset(self):
-        qs = Order.objects.select_related('customer', 'trading_point').prefetch_related('items', 'status_history')
+        qs = Order.objects.select_related('customer', 'trading_point').prefetch_related('items', 'items__nomenclature', 'status_history')
         return _tenant_filter(qs, self.request.user, tp_field='trading_point')
 
 

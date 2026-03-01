@@ -133,6 +133,12 @@ class Transaction(models.Model):
         verbose_name = 'Транзакция'
         verbose_name_plural = 'Транзакции'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['organization', '-created_at'], name='idx_txn_org_dt'),
+            models.Index(fields=['wallet_from', '-created_at'], name='idx_txn_wfrom_dt'),
+            models.Index(fields=['wallet_to', '-created_at'], name='idx_txn_wto_dt'),
+            models.Index(fields=['transaction_type'], name='idx_txn_type'),
+        ]
 
     def __str__(self):
         return f'{self.get_transaction_type_display()}: {self.amount} руб.'
@@ -237,6 +243,10 @@ class CashShift(models.Model):
         verbose_name = 'Кассовая смена'
         verbose_name_plural = 'Кассовые смены'
         ordering = ['-opened_at']
+        indexes = [
+            models.Index(fields=['organization', '-opened_at'], name='idx_shift_org_dt'),
+            models.Index(fields=['trading_point', 'status'], name='idx_shift_tp_status'),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=['wallet'],

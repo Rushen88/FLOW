@@ -63,6 +63,11 @@ class Sale(models.Model):
         verbose_name = 'Продажа'
         verbose_name_plural = 'Продажи'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['organization', '-created_at'], name='idx_sale_org_dt'),
+            models.Index(fields=['trading_point', '-created_at'], name='idx_sale_tp_dt'),
+            models.Index(fields=['status'], name='idx_sale_status'),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=['organization', 'number'],
@@ -206,6 +211,12 @@ class Order(models.Model):
         verbose_name = 'Заказ'
         verbose_name_plural = 'Заказы'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['organization', '-created_at'], name='idx_order_org_dt'),
+            models.Index(fields=['trading_point', '-created_at'], name='idx_order_tp_dt'),
+            models.Index(fields=['status'], name='idx_order_status'),
+            models.Index(fields=['delivery_date'], name='idx_order_delivery_date'),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=['organization', 'number'],
