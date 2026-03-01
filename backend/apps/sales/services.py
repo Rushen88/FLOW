@@ -285,19 +285,15 @@ def sync_sale_transaction(sale):
             existing_tx.delete()
 
 
-@transaction.atomic
-def rollback_sale_effects_before_delete(sale):
+def _rollback_sale_fifo(sale):
     """
-    Откатить последствия проведённой продажи перед удалением записи Sale:
-    - вернуть складские остатки/партии по движениям типа SALE этой продажи,
-    - откатить финансовые транзакции, привязанные к продаже,
-    - откатить статистику клиента.
+    Откатить только складские FIFO-движения по продаже.
+    Восстанавливает batch.remaining и StockBalance.
+    Вызывается ВНУТРИ transaction.atomic.
     """
     from apps.inventory.models import StockMovement, Batch
     from apps.inventory.services import _update_stock_balance
-    from apps.finance.models import Transaction, Wallet
 
-    # Используем FK sale вместо notes__contains для надёжного поиска движений
     sale_movements = (
         StockMovement.objects
         .select_related('batch', 'warehouse_from', 'nomenclature')
@@ -308,24 +304,39 @@ def rollback_sale_effects_before_delete(sale):
         )
         .order_by('-created_at')
     )
-    if sale_movements.exists():
+    if not sale_movements.exists():
+        return
 
-        for movement in sale_movements:
-            if movement.batch_id:
-                batch = Batch.objects.select_for_update().filter(pk=movement.batch_id).first()
-                if batch:
-                    batch.remaining = (batch.remaining or Decimal('0')) + Decimal(str(movement.quantity or 0))
-                    batch.save(update_fields=['remaining'])
+    for movement in sale_movements:
+        if movement.batch_id:
+            batch = Batch.objects.select_for_update().filter(pk=movement.batch_id).first()
+            if batch:
+                batch.remaining = (batch.remaining or Decimal('0')) + Decimal(str(movement.quantity or 0))
+                batch.save(update_fields=['remaining'])
 
-            if movement.warehouse_from_id and movement.nomenclature_id:
-                _update_stock_balance(
-                    organization=sale.organization,
-                    warehouse=movement.warehouse_from,
-                    nomenclature=movement.nomenclature,
-                    qty_delta=Decimal(str(movement.quantity or 0)),
-                )
+        if movement.warehouse_from_id and movement.nomenclature_id:
+            _update_stock_balance(
+                organization=sale.organization,
+                warehouse=movement.warehouse_from,
+                nomenclature=movement.nomenclature,
+                qty_delta=Decimal(str(movement.quantity or 0)),
+            )
 
-        sale_movements.delete()
+    sale_movements.delete()
+
+
+@transaction.atomic
+def rollback_sale_effects_before_delete(sale):
+    """
+    Откатить последствия проведённой продажи перед удалением записи Sale:
+    - вернуть складские остатки/партии по движениям типа SALE этой продажи,
+    - откатить финансовые транзакции, привязанные к продаже,
+    - откатить статистику клиента и счётчик промокода.
+    """
+    from apps.finance.models import Transaction, Wallet
+
+    # P5-BUG3: Откат FIFO-складских движений — вынесен в отдельную функцию
+    _rollback_sale_fifo(sale)
 
     tx_qs = Transaction.objects.select_for_update().filter(sale=sale)
     for tx in tx_qs:
@@ -338,6 +349,16 @@ def rollback_sale_effects_before_delete(sale):
                 balance=db_models.F('balance') + tx.amount
             )
     tx_qs.delete()
+
+    # P5-BUG3: Откат счётчика использований промокода
+    if getattr(sale, 'promo_code_id', None):
+        from django.db.models import F
+        from django.db.models.functions import Greatest
+        from django.db.models import Value, IntegerField
+        from apps.marketing.models import PromoCode
+        PromoCode.objects.filter(pk=sale.promo_code_id).update(
+            used_count=Greatest(F('used_count') - 1, Value(0, output_field=IntegerField()))
+        )
 
     if sale.status == Sale.Status.COMPLETED and sale.is_paid and sale.customer_id:
         from django.db.models import F, Value, DecimalField, IntegerField

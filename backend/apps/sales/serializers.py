@@ -11,6 +11,7 @@ from .services import (
     sync_sale_transaction,
     update_customer_stats,
     rollback_sale_effects_before_delete,
+    _rollback_sale_fifo,
     validate_order_status_transition,
     create_order_status_history,
 )
@@ -80,7 +81,7 @@ class SaleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sale
         fields = '__all__'
-        read_only_fields = ['organization', 'is_paid', 'completed_at']
+        read_only_fields = ['organization', 'is_paid', 'completed_at', 'subtotal', 'discount_amount', 'total']
 
     def get_customer_name(self, obj):
         return str(obj.customer) if obj.customer else ''
@@ -213,8 +214,9 @@ class SaleSerializer(serializers.ModelSerializer):
 
         sync_sale_transaction(sale)
 
-        # Обновление статистики клиента при завершённой продаже
-        if sale.status == Sale.Status.COMPLETED and sale.is_paid and sale.customer:
+        # Обновление статистики клиента и промокода при завершённой продаже
+        # P5-BUG4: Вызываем всегда (не только при наличии customer) — для учёта промокода
+        if sale.status == Sale.Status.COMPLETED and sale.is_paid:
             update_customer_stats(sale, sale.total, 1)
 
         return sale
@@ -272,7 +274,8 @@ class SaleSerializer(serializers.ModelSerializer):
                     self.context.setdefault('sale_warnings', []).extend(warnings)
                 # P4-CRITICAL: Обновляем статистику ТОЛЬКО при переприменении после отката
                 # (sale уже была completed). Переход open→completed обрабатывается внешним блоком.
-                if was_completed_paid and instance.customer:
+                # P5-BUG4: Убрана проверка customer — промокод считается независимо
+                if was_completed_paid:
                     update_customer_stats(instance, instance.total, 1)
 
         # FIFO-списание при переходе в completed + is_paid
@@ -282,6 +285,10 @@ class SaleSerializer(serializers.ModelSerializer):
             warnings = do_sale_fifo_write_off(instance)
             if warnings:
                 self.context.setdefault('sale_warnings', []).extend(warnings)
+
+        # P5-BUG1: Откат FIFO при переходе ИЗ completed БЕЗ замены позиций
+        if was_completed_paid and not now_completed_paid and items_data is None:
+            _rollback_sale_fifo(instance)
 
         sync_sale_transaction(instance)
 

@@ -148,11 +148,11 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 is_custom_bouquet=item.is_custom_bouquet,
             )
 
-        # Бизнес-логика: FIFO-списание, финансовая проводка, статистика клиента
+        # Бизнес-логика: FIFO-списание, финансовая проводка, статистика клиента + промокод
         do_sale_fifo_write_off(sale)
         sync_sale_transaction(sale)
-        if sale.customer:
-            update_customer_stats(sale, sale.total, 1)
+        # P5-BUG4: Вызываем всегда (не только при наличии customer) — для учёта промокода
+        update_customer_stats(sale, sale.total, 1)
 
         # Переход статуса (уже проверен выше)
         order.transition_to('completed', user=request.user, comment='Checkout — чек создан')
