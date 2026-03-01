@@ -1160,3 +1160,11 @@ npm run dev                       # → http://localhost:3000
 - **Idempotent 5xx Retry:** В Axios-interceptor вшита логика автоматического Auto-Retry (с экспоненциальной задержкой) для методов GET/HEAD/OPTIONS. Система 'проглатывает' кратковременные 502/504 ошибки Nginx без падения и выдачи красных экранов.
 - **Cross-Tab Auth Synchronization:** Внедрен StorageEvent listener на ccess_token. Если в одной вкладке браузера менеджер нажимает 'Выход' или токен окончательно стухает, все остальные активные вкладки моментально сбрасывают состояние и переходят на экран логина, исключая доступ к кешированным данным.
 - **Vite Bundle Chunking:** В ite.config.ts настроен manualChunks для сегрегации React/MUI/Recharts в отдельных vendor-сплетениях. Хранение неизменных библиотек в кэше браузера сокращает размер загружаемых данных на новых релизах в несколько раз.
+
+## 15. Server Security & Load Tuning (Audit Round 5)
+
+- **PostgreSQL Connection Pooling:** В Django включен CONN_MAX_AGE=600, позволяющий переиспользовать открытые TCP-коннекты к БД вместо открытия и закрытия нового коннекта на каждый HTTP запрос. Это колоссально снижает CPU & Memory оверхед базы данных, подготавливая ее к 10k+ онлайну.
+- **Nginx API Resilience:** Добавлены увеличенные таймауты (proxy_read_timeout 300s) в секцию location /api/, предотвращающие падения 504 Gateway Timeout при выгрузке тяжелых исторических отчетов аналитики за несколько лет.
+- **DDoS/Bruteforce Защита:** В Django Rest Framework активирован встроенный Throttling Engine: 1000 запросов/минута для авторизованных пользователей и 30/мин для неавторизованных, защищающий систему от базовых brute-force атак на эндпоинты /api/auth/token/.
+- **Gunicorn Workers & Threads:** Контейнер переведен в режим многопоточности (--workers 3 --threads 2 --worker-class gthread), обеспечивающий асинхронную обработку медленных запросов без блокировки Worker-процессов.
+- **Enterprise Security Headers:** В конфигурацию бэкенда вшиты строгие заголовки X_FRAME_OPTIONS = 'DENY' (защита от Clickjacking) и SECURE_CONTENT_TYPE_NOSNIFF, необходимые по стандартам безопасной разработки (OWASP).
