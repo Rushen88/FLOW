@@ -10,7 +10,7 @@ class Batch(models.Model):
         related_name='batches', verbose_name='Организация',
     )
     nomenclature = models.ForeignKey(
-        'nomenclature.Nomenclature', on_delete=models.CASCADE,
+        'nomenclature.Nomenclature', on_delete=models.PROTECT,
         related_name='batches', verbose_name='Номенклатура',
     )
     supplier = models.ForeignKey(
@@ -18,7 +18,7 @@ class Batch(models.Model):
         related_name='batches', verbose_name='Поставщик',
     )
     warehouse = models.ForeignKey(
-        'core.Warehouse', on_delete=models.CASCADE,
+        'core.Warehouse', on_delete=models.PROTECT,
         related_name='batches', verbose_name='Склад',
     )
     purchase_price = models.DecimalField(
@@ -59,11 +59,11 @@ class StockBalance(models.Model):
         related_name='stock_balances', verbose_name='Организация',
     )
     warehouse = models.ForeignKey(
-        'core.Warehouse', on_delete=models.CASCADE,
+        'core.Warehouse', on_delete=models.PROTECT,
         related_name='stock_balances', verbose_name='Склад',
     )
     nomenclature = models.ForeignKey(
-        'nomenclature.Nomenclature', on_delete=models.CASCADE,
+        'nomenclature.Nomenclature', on_delete=models.PROTECT,
         related_name='stock_balances', verbose_name='Номенклатура',
     )
     quantity = models.DecimalField('Количество', max_digits=10, decimal_places=2, default=0)
@@ -112,7 +112,7 @@ class StockMovement(models.Model):
         related_name='stock_movements', verbose_name='Организация',
     )
     nomenclature = models.ForeignKey(
-        'nomenclature.Nomenclature', on_delete=models.CASCADE,
+        'nomenclature.Nomenclature', on_delete=models.PROTECT,
         related_name='stock_movements', verbose_name='Номенклатура',
     )
     movement_type = models.CharField(
@@ -175,7 +175,7 @@ class InventoryDocument(models.Model):
         related_name='inventory_documents', verbose_name='Организация',
     )
     warehouse = models.ForeignKey(
-        'core.Warehouse', on_delete=models.CASCADE,
+        'core.Warehouse', on_delete=models.PROTECT,
         related_name='inventory_documents', verbose_name='Склад',
     )
     number = models.CharField('Номер', max_length=50)
@@ -208,7 +208,7 @@ class InventoryItem(models.Model):
         related_name='items', verbose_name='Документ',
     )
     nomenclature = models.ForeignKey(
-        'nomenclature.Nomenclature', on_delete=models.CASCADE,
+        'nomenclature.Nomenclature', on_delete=models.PROTECT,
         related_name='inventory_items', verbose_name='Номенклатура',
     )
     expected_quantity = models.DecimalField('Ожидаемое', max_digits=10, decimal_places=2)
@@ -242,11 +242,11 @@ class Reserve(models.Model):
         related_name='reserves', verbose_name='Организация',
     )
     nomenclature = models.ForeignKey(
-        'nomenclature.Nomenclature', on_delete=models.CASCADE,
+        'nomenclature.Nomenclature', on_delete=models.PROTECT,
         related_name='reserves', verbose_name='Номенклатура',
     )
     warehouse = models.ForeignKey(
-        'core.Warehouse', on_delete=models.CASCADE,
+        'core.Warehouse', on_delete=models.PROTECT,
         related_name='reserves', verbose_name='Склад',
     )
     order = models.ForeignKey(

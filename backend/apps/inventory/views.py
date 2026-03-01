@@ -26,7 +26,7 @@ def _validate_org_fk(obj, org, label='Объект'):
         raise PermissionDenied(f'{label} не принадлежит вашей организации.')
 
 
-class BatchViewSet(viewsets.ModelViewSet):
+class BatchViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     """
     Партии товара.
     При создании (POST) автоматически:

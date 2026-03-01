@@ -101,11 +101,11 @@ class Transaction(models.Model):
         related_name='transactions', verbose_name='Категория',
     )
     wallet_from = models.ForeignKey(
-        Wallet, on_delete=models.SET_NULL, null=True, blank=True,
+        Wallet, on_delete=models.PROTECT, null=True, blank=True,
         related_name='transactions_out', verbose_name='Из кошелька',
     )
     wallet_to = models.ForeignKey(
-        Wallet, on_delete=models.SET_NULL, null=True, blank=True,
+        Wallet, on_delete=models.PROTECT, null=True, blank=True,
         related_name='transactions_in', verbose_name='В кошелёк',
     )
     amount = models.DecimalField('Сумма', max_digits=14, decimal_places=2)
@@ -205,11 +205,11 @@ class CashShift(models.Model):
         related_name='cash_shifts', verbose_name='Организация',
     )
     trading_point = models.ForeignKey(
-        'core.TradingPoint', on_delete=models.CASCADE,
+        'core.TradingPoint', on_delete=models.PROTECT,
         related_name='cash_shifts', verbose_name='Торговая точка',
     )
     wallet = models.ForeignKey(
-        Wallet, on_delete=models.CASCADE,
+        Wallet, on_delete=models.PROTECT,
         related_name='cash_shifts', verbose_name='Касса (Кошелёк)',
     )
     opened_by = models.ForeignKey(

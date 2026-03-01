@@ -172,31 +172,45 @@ class CashShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         if shift.status == CashShift.Status.CLOSED:
             return Response({'detail': 'Смена уже закрыта.'}, status=status.HTTP_400_BAD_REQUEST)
             
+        # Явная блокировка кошелька для предотвращения Race Condition
+        wallet = Wallet.objects.select_for_update().get(pk=shift.wallet_id)
+
         serializer = CashShiftCloseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         actual = serializer.validated_data['actual_balance_at_close']
         notes = serializer.validated_data.get('notes', '')
-        
-        # M5: Ожидаемый баланс = баланс при открытии + приход - расход за смену
+
+        # Подсчет переведен на заблокированный связанный кошелек
         shift_income = Transaction.objects.filter(
-            wallet_to=shift.wallet,
+            wallet_to=wallet,
             created_at__gte=shift.opened_at,
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
         shift_expense = Transaction.objects.filter(
-            wallet_from=shift.wallet,
+            wallet_from=wallet,
             created_at__gte=shift.opened_at,
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
         expected = shift.balance_at_open + shift_income - shift_expense
-        
+
         shift.actual_balance_at_close = actual
         shift.expected_balance_at_close = expected
         shift.discrepancy = actual - expected
-        if notes:
-            shift.notes = f"{shift.notes}\nЗакрытие: {notes}"
-        shift.status = CashShift.Status.CLOSED
-        shift.closed_by = request.user
-        shift.closed_at = timezone.now()
+
+        # Генерация корректирующей транзакции для сохранения финансовой идемпотентности
+        if shift.discrepancy != 0:
+            from apps.finance.services import apply_wallet_balance
+            txn_type = Transaction.TransactionType.INCOME if shift.discrepancy > 0 else Transaction.TransactionType.EXPENSE
+            correction_txn = Transaction.objects.create(
+                organization=shift.organization,
+                transaction_type=txn_type,
+                wallet_from=wallet if shift.discrepancy < 0 else None,
+                wallet_to=wallet if shift.discrepancy > 0 else None,
+                amount=abs(shift.discrepancy),
+                description=f'Корректировка при закрытии кассовой смены {shift.number if hasattr(shift, "number") else shift.id}',
+                user=request.user,
+            )
+            apply_wallet_balance(correction_txn)
+
         shift.save()
         
         return Response(CashShiftSerializer(shift).data)

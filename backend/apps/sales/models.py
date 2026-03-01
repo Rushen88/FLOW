@@ -16,7 +16,7 @@ class Sale(models.Model):
         related_name='sales', verbose_name='Организация',
     )
     trading_point = models.ForeignKey(
-        'core.TradingPoint', on_delete=models.CASCADE,
+        'core.TradingPoint', on_delete=models.PROTECT,
         related_name='sales', verbose_name='Торговая точка',
     )
     number = models.CharField('Номер чека', max_length=50, blank=True, default='')
@@ -134,7 +134,7 @@ class Order(models.Model):
         related_name='orders', verbose_name='Организация',
     )
     trading_point = models.ForeignKey(
-        'core.TradingPoint', on_delete=models.CASCADE,
+        'core.TradingPoint', on_delete=models.PROTECT,
         related_name='orders', verbose_name='Торговая точка',
     )
     number = models.CharField('Номер заказа', max_length=50, blank=True, default='')
