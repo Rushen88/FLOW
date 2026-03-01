@@ -94,34 +94,13 @@ class TransactionViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         txn = serializer.instance
         apply_wallet_balance(txn, reverse=False)
 
-    @db_transaction.atomic
     def perform_update(self, serializer):
-        """Обновление транзакции: откат старого баланса → применение нового."""
-        old_txn = Transaction.objects.select_for_update().get(pk=self.get_object().pk)
-        # Откат старых значений
-        apply_wallet_balance(old_txn, reverse=True)
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('PUT/PATCH', detail='Изменение финансовых транзакций запрещено архитектурой (Double-Entry). Создайте корректирующую транзакцию.')
 
-        org = _resolve_org(self.request.user)
-        # P2-HIGH: При PATCH берём кошельки из validated_data, а если не указаны — из старой транзакции
-        wallet_from = serializer.validated_data.get('wallet_from', old_txn.wallet_from)
-        wallet_to = serializer.validated_data.get('wallet_to', old_txn.wallet_to)
-        validate_wallet_ownership(org, wallet_from=wallet_from, wallet_to=wallet_to)
-        validate_transaction_wallet_rules(
-            transaction_type=serializer.validated_data.get('transaction_type', old_txn.transaction_type),
-            wallet_from=wallet_from,
-            wallet_to=wallet_to,
-        )
-        serializer.save(organization=org)
-        txn = serializer.instance
-        # Применение новых значений
-        apply_wallet_balance(txn, reverse=False)
-
-    @db_transaction.atomic
     def perform_destroy(self, instance):
-        """Удаление транзакции: откат баланса."""
-        locked_txn = Transaction.objects.select_for_update().get(pk=instance.pk)
-        apply_wallet_balance(locked_txn, reverse=True)
-        instance.delete()
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('DELETE', detail='Удаление финансовых транзакций запрещено. Создайте корректирующую транзакцию.')
 
 
 class DebtViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):

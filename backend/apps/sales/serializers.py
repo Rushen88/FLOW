@@ -208,7 +208,10 @@ class SaleSerializer(serializers.ModelSerializer):
 
         # FIFO-списание со склада при завершённой и оплаченной продаже
         if sale.status == Sale.Status.COMPLETED and sale.is_paid:
-            warnings = do_sale_fifo_write_off(sale)
+            try:
+                warnings = do_sale_fifo_write_off(sale)
+            except ValueError as e:
+                raise serializers.ValidationError(str(e))
             if warnings:
                 self.context.setdefault('sale_warnings', []).extend(warnings)
 
@@ -269,7 +272,10 @@ class SaleSerializer(serializers.ModelSerializer):
             # FIFO-списание не должно происходить
             now_still_completed_paid = (instance.status == Sale.Status.COMPLETED and instance.is_paid)
             if now_still_completed_paid:
-                warnings = do_sale_fifo_write_off(instance)
+                try:
+                    warnings = do_sale_fifo_write_off(instance)
+                except ValueError as e:
+                    raise serializers.ValidationError(str(e))
                 if warnings:
                     self.context.setdefault('sale_warnings', []).extend(warnings)
                 # P4-CRITICAL: Обновляем статистику ТОЛЬКО при переприменении после отката
@@ -282,7 +288,10 @@ class SaleSerializer(serializers.ModelSerializer):
         was_completed_paid = (old_status == Sale.Status.COMPLETED and old_is_paid)
         now_completed_paid = (instance.status == Sale.Status.COMPLETED and instance.is_paid)
         if now_completed_paid and not was_completed_paid:
-            warnings = do_sale_fifo_write_off(instance)
+            try:
+                warnings = do_sale_fifo_write_off(instance)
+            except ValueError as e:
+                raise serializers.ValidationError(str(e))
             if warnings:
                 self.context.setdefault('sale_warnings', []).extend(warnings)
 
@@ -460,3 +469,4 @@ class OrderListSerializer(serializers.ModelSerializer):
 
     def get_customer_name(self, obj):
         return str(obj.customer) if obj.customer else ''
+

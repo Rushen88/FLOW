@@ -173,7 +173,7 @@ def do_sale_fifo_write_off(sale):
         if not warehouse:
             warehouse = Warehouse.objects.filter(organization=sale.organization).order_by('id').first()
         if not warehouse:
-            continue
+            raise ValueError(f'Не найден склад для списания товара "{nom.name}". Убедитесь, что для торговой точки назначен склад по умолчанию.')
 
         available_qty = (
             Batch.objects.filter(

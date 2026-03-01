@@ -15,6 +15,9 @@ from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, ReadOnlyOrMa
 
 
 class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('DELETE', detail='Удаление продаж запрещено архитектурой. Переведите продажу в статус Отменена для корректного отката балансов и остатков.')
     serializer_class = SaleSerializer
     queryset = Sale.objects.all()
     permission_classes = [ReadOnlyOrManager]
@@ -75,6 +78,9 @@ class SaleItemViewSet(viewsets.ModelViewSet):
 
 
 class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('DELETE', detail='Удаление заказов запрещено архитектурой. Переведите заказ в статус Отменён.')
     serializer_class = OrderSerializer
     queryset = Order.objects.all()
     permission_classes = [ReadOnlyOrManager]

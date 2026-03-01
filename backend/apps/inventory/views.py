@@ -27,6 +27,7 @@ def _validate_org_fk(obj, org, label='Объект'):
 
 
 class BatchViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
+    http_method_names = ['get', 'post', 'head', 'options']
     """
     Партии товара.
     При создании (POST) автоматически:
@@ -191,6 +192,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
+    http_method_names = ['get', 'post', 'head', 'options']
     serializer_class = StockMovementSerializer
     queryset = StockMovement.objects.all()
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -574,6 +576,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 
 
 class InventoryDocumentViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
+    http_method_names = ['get', 'post', 'head', 'options']
     serializer_class = InventoryDocumentSerializer
     queryset = InventoryDocument.objects.all()
 
