@@ -82,7 +82,8 @@ class SupplierOrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             return Response({'detail': 'Отменённый заказ нельзя принять.'}, status=status.HTTP_400_BAD_REQUEST)
 
         warehouse_id = request.data.get('warehouse')
-        create_debt = request.data.get('create_debt', True)
+        raw_debt = request.data.get('create_debt', True)
+        create_debt = raw_debt not in (False, 'false', '0', 0)
 
         if warehouse_id:
             try:

@@ -100,6 +100,12 @@ class SaleSerializer(serializers.ModelSerializer):
         promo = attrs.get('promo_code') or (self.instance.promo_code if self.instance else None)
         organization = attrs.get('organization') or (self.instance.organization if self.instance else None)
 
+        # P2-MEDIUM: При создании organization ещё не установлена — берём из request.user
+        if not organization:
+            request = self.context.get('request')
+            if request and hasattr(request, 'user') and hasattr(request.user, 'organization'):
+                organization = request.user.organization
+
         # H3: проверка что бонусов хватает
         if used_bonuses > 0:
             if not customer:
@@ -256,6 +262,13 @@ class SaleSerializer(serializers.ModelSerializer):
                         item_data['batch'] = batch
                 SaleItem.objects.create(sale=instance, **item_data)
             recalc_sale_totals(instance)
+            # P2-HIGH: Если была completed+paid, переприменяем FIFO и статистику
+            if was_completed_paid:
+                warnings = do_sale_fifo_write_off(instance)
+                if warnings:
+                    self.context.setdefault('sale_warnings', []).extend(warnings)
+                if instance.customer:
+                    update_customer_stats(instance, instance.total, 1)
 
         # FIFO-списание при переходе в completed + is_paid
         was_completed_paid = (old_status == Sale.Status.COMPLETED and old_is_paid)

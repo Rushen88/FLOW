@@ -102,8 +102,9 @@ class TransactionViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         apply_wallet_balance(old_txn, reverse=True)
 
         org = _resolve_org(self.request.user)
-        wallet_from = serializer.validated_data.get('wallet_from')
-        wallet_to = serializer.validated_data.get('wallet_to')
+        # P2-HIGH: При PATCH берём кошельки из validated_data, а если не указаны — из старой транзакции
+        wallet_from = serializer.validated_data.get('wallet_from', old_txn.wallet_from)
+        wallet_to = serializer.validated_data.get('wallet_to', old_txn.wallet_to)
         validate_wallet_ownership(org, wallet_from=wallet_from, wallet_to=wallet_to)
         validate_transaction_wallet_rules(
             transaction_type=serializer.validated_data.get('transaction_type', old_txn.transaction_type),

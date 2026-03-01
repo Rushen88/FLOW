@@ -101,6 +101,15 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         if order.sales.exists():
             return Response({'detail': 'Чек по этому заказу уже существует.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # CRITICAL P2: проверка перехода статуса ДО создания Sale
+        if not order.can_transition_to('completed'):
+            allowed = order.ALLOWED_TRANSITIONS.get(order.status, [])
+            return Response(
+                {'detail': f'Невозможно завершить заказ из статуса «{order.get_status_display()}». '
+                           f'Допустимые: {", ".join(order.Status(s).label for s in allowed) or "нет"}.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
         # Блокировка организации для генерации номера
         lock_organization_row(order.organization_id)
 
@@ -109,8 +118,6 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             trading_point=order.trading_point,
             status=CashShift.Status.OPEN,
         ).order_by('-opened_at').first()
-
-        remaining = max(order.total - (order.prepayment or 0), Decimal('0'))
 
         sale = Sale.objects.create(
             number=generate_sale_number(order.organization),
@@ -122,7 +129,7 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             order=order,
             subtotal=order.subtotal,
             discount_amount=order.discount_amount,
-            total=remaining,
+            total=order.total,
             payment_method=order.payment_method,
             cash_shift=active_shift,
             promo_code=order.promo_code,
@@ -147,14 +154,8 @@ class OrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         if sale.customer:
             update_customer_stats(sale, sale.total, 1)
 
-        # Безопасный переход статуса через transition_to (с аудит-логом)
-        try:
-            order.transition_to('completed', user=request.user, comment='Checkout — чек создан')
-        except ValueError as exc:
-            return Response(
-                {'detail': f'Невозможно завершить заказ: {exc}'},
-                status=status.HTTP_409_CONFLICT,
-            )
+        # Переход статуса (уже проверен выше)
+        order.transition_to('completed', user=request.user, comment='Checkout — чек создан')
 
         return Response({'detail': 'Продажа успешно создана', 'sale_id': str(sale.id)}, status=status.HTTP_201_CREATED)
 

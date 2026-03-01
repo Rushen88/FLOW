@@ -344,6 +344,11 @@ def rollback_sale_effects_before_delete(sale):
         from django.db.models.functions import Greatest
         from apps.customers.models import Customer
 
+        # Откат бонусов: возвращаем использованные, убираем начисленные
+        earned = getattr(sale, 'earned_bonuses', None) or Decimal('0')
+        used = getattr(sale, 'used_bonuses', None) or Decimal('0')
+        bonus_delta = used - earned  # реверс
+
         Customer.objects.select_for_update().filter(pk=sale.customer_id).update(
             total_purchases=Greatest(
                 F('total_purchases') - sale.total,
@@ -352,6 +357,10 @@ def rollback_sale_effects_before_delete(sale):
             purchases_count=Greatest(
                 F('purchases_count') - 1,
                 Value(0, output_field=IntegerField()),
+            ),
+            bonus_points=Greatest(
+                F('bonus_points') + bonus_delta,
+                Value(Decimal('0.00'), output_field=DecimalField(max_digits=12, decimal_places=2)),
             ),
         )
 

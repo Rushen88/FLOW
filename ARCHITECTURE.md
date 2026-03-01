@@ -1057,3 +1057,35 @@ npm run dev                       # → http://localhost:3000
 * **CashShift**: Модель для хранения состояния смены (открыта/закрыта), открытия баланса, закрытия баланса, расчетного баланса и расхождений (discrepancy).
 * **Привязка к сущностям**: Привязывается к конкретной TradingPoint (Розничной точке), Wallet (Кошельку/Кассе) и User (Кассиру, открывшему смену).
 * **Связь с продажами (Sales)**: В модель Sale добавлен cash_shift. Все продажи в рамках розничной точки автоматически привязываются к текущей открытой кассовой смене.
+
+### Аудит системы — Проход 1 (2026-03-02)
+
+#### Критические исправления (Backend)
+- **C1**: Checkout заказа теперь передаёт `promo_code` и `used_bonuses` в создаваемую продажу
+- **C2**: `StockBalance` — `select_for_update()` предотвращает гонки при одновременном обновлении остатков
+- **C3**: `validate_transaction_wallet_rules` — строгая валидация: EXPENSE/SALARY/SUPPLIER_PAYMENT требуют `wallet_from`, INCOME требует `wallet_to`
+- **C4**: `process_batch_receipt` — параметр `create_debt` для условного создания долга поставщику
+- **C5**: Новый endpoint `POST /api/suppliers/orders/{id}/receive/` — приёмка поставки на склад с созданием партий
+
+#### Высокий приоритет (Backend)
+- **H3/H4**: SaleSerializer.validate() — проверка лимита бонусов по программе лояльности, валидация промокода (is_active, max_uses, даты)
+- **H6**: CashShiftViewSet — `ReadOnlyOrManager` permission class
+- **H7**: CashShift open — `@db_transaction.atomic` + `select_for_update()` для TOCTOU-защиты
+- **H8**: State machine — убран fallback при ошибке перехода, возвращается HTTP 409
+
+#### Средний приоритет (Backend)
+- **M1**: Средневзвешенная закупочная цена вместо «цена последней поставки»
+- **M4**: SalaryAccrual.save() — авто-расчёт total = base_amount + bonus + sales_bonus - penalty
+- **M5**: CashShift close — ожидаемый баланс из balance_at_open + shift_income - shift_expense
+- **M7**: UniqueConstraint `unique_open_shift_per_wallet` — не более одной открытой смены на кошелёк
+- **M9**: ImportantDateViewSet, CustomerAddressViewSet — `ReadOnlyOrManager` permissions
+
+#### Фронтенд
+- **F1**: SalesPage — поля Промокод (select) и Бонусы к списанию (number input) в форме создания/редактирования
+- **F2**: OrdersPage — поля Ответственный, Флорист (select из users), Курьер (select из couriers) в форме заказа и детальном просмотре
+- **F3**: SuppliersPage — кнопка «Принять поставку» для заказов в статусе confirmed/shipped, диалог выбора склада и опция создания долга
+- **F4**: DataTable — debounce 350мс на поиске
+
+#### Новые поля моделей
+- **Sale / Order**: `promo_code` (FK → PromoCode), `used_bonuses`, `earned_bonuses` (DecimalField)
+- **CashShift**: UniqueConstraint `unique_open_shift_per_wallet` (condition: status=open)
