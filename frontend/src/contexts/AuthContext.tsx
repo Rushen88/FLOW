@@ -79,12 +79,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }, [])
 
-  // Listen for forced logout from api interceptor
+  // Listen for forced logout from api interceptor and cross-tab storage changes
   useEffect(() => {
-    const handler = () => logout()
-    window.addEventListener('auth:logout', handler)
-    return () => window.removeEventListener('auth:logout', handler)
-  }, [logout])
+    const customLogoutHandler = () => logout()
+    
+    const storageHandler = (event: StorageEvent) => {
+      if (event.key === 'access_token' && !event.newValue) {
+        // Logged out from another tab
+        setUser(null)
+      } else if (event.key === 'access_token' && event.newValue) {
+        // Logged in from another tab
+        fetchUser()
+      }
+    }
+
+    window.addEventListener('auth:logout', customLogoutHandler)
+    window.addEventListener('storage', storageHandler)
+    
+    return () => {
+      window.removeEventListener('auth:logout', customLogoutHandler)
+      window.removeEventListener('storage', storageHandler)
+    }
+  }, [logout, fetchUser])
 
   const switchOrganization = async (orgId: string | null) => {
     try {

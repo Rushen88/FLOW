@@ -18,4 +18,17 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    target: 'esnext',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-mui': ['@mui/material', '@mui/icons-material', '@emotion/react', '@emotion/styled'],
+          'vendor-charts': ['recharts', 'dayjs'],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 1000,
+  },
 })

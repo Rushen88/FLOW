@@ -25,10 +25,30 @@ const processQueue = (error: unknown, token: string | null) => {
   failedQueue = []
 }
 
+// ─── Retry Logic for Network Errors & 5xx ─────────
+const MAX_RETRIES = 3;
+const RETRY_STATUS_CODES = [408, 429, 500, 502, 503, 504];
+const IDEMPOTENT_METHODS = ['get', 'head', 'options'];
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config
+    const originalRequest = error.config;
+    
+    // Auto-retry network errors or server drops for idempotent methods
+    if (originalRequest && 
+        IDEMPOTENT_METHODS.includes(originalRequest.method?.toLowerCase() || '') &&
+        (!error.response || RETRY_STATUS_CODES.includes(error.response.status))) {
+        
+        originalRequest._retryCount = originalRequest._retryCount || 0;
+        if (originalRequest._retryCount < MAX_RETRIES) {
+            originalRequest._retryCount += 1;
+            const delay = Math.pow(2, originalRequest._retryCount) * 1000 + Math.random() * 500; // Exponential backoff + jitter
+            await new Promise(res => setTimeout(res, delay));
+            return api(originalRequest);
+        }
+    }
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
         // Another request is already refreshing — queue this one
