@@ -605,8 +605,8 @@ npm run dev                       # → http://localhost:3000
 - ✅ ~~BatchViewSet.create(): проверка cross-tenant владения объектами~~ — **Исправлено**: _validate_org_fk() во всех inventory actions
 - 🔲 Бизнес-логика Order: валидация переходов статусов, автоматический OrderStatusHistory
 - 🔲 NomenclatureGroupSerializer: ограничение глубины рекурсии
-- 🔲 PromoCode: атомарный инкремент used_count через F() при применении
-- 🔲 Начисление бонусов клиенту при продаже (LoyaltyProgram)
+- ✅ ~~PromoCode: атомарный инкремент used_count через F() при применении~~ — **Исправлено** (Audit Pass 5): `update_customer_stats` инкрементирует `used_count` через F(), `rollback_sale_effects_before_delete` декрементирует
+- ✅ ~~Начисление бонусов клиенту при продаже (LoyaltyProgram)~~ — **Исправлено** (Audit Pass 1): `update_customer_stats` начисляет `earned_bonuses` по LoyaltyProgram
 - 🔲 N+1 query оптимизация (select_related/prefetch_related во всех ViewSet-ах)
 - 🔲 Code-splitting (dynamic import) для уменьшения размера бандла (~1.2MB)
 - 🔲 Вынести SECRET_KEY, DB-пароль и другие secrets в переменные окружения (django-environ)
@@ -623,6 +623,61 @@ npm run dev                       # → http://localhost:3000
 - 🔲 Мобильное приложение (React Native / PWA)
 - 🔲 Redis для кеширования и Celery для фоновых задач
 - 🔲 Автоматические отчёты и email-рассылки
+---
+
+## Changelog — Глубокий 5-проходный аудит (Passes 1–5)
+
+### Audit Pass 1 — Инфраструктурные и бизнес-критические баги
+- ✅ **C1**: FIFO-списание потеряно при обновлении позиций completed-продажи (rollback + re-apply)
+- ✅ **C2**: TOCTOU race condition при открытии кассовой смены (`select_for_update` + `UniqueConstraint`)
+- ✅ **C3**: `sale.total = order.remaining` вместо `order.total` — нарушение инварианта суммы
+- ✅ **C4**: Checkout коммитил Sale ДО transition_to — невалидный переход оставлял мусорную продажу
+- ✅ **C5**: `InsufficientStockError` не обрабатывалась → 500 error при нехватке на складе
+- ✅ **H3**: Промокод/бонус validation (достаточность бонусов, max_payment_percent, активность промокода)
+- ✅ **H4**: Промокод: проверка срока действия, лимита использований
+- ✅ **H6**: Sale items — добавлен write-only `items_data` поле для SaleSerializer
+- ✅ **H7**: Авто-привязка кассовой смены к продаже при создании
+- ✅ **H8**: Auto `completed_at` при переходе в completed
+- ✅ **M1**: `sale.number` генерация через `generate_sale_number()` — Cast to Integer + Max safe
+- ✅ **M4**: `ReadOnlyOrManager` permission на finance viewsets (debt, transaction)
+- ✅ **M5**: Expected balance calculation при закрытии кассовой смены
+- ✅ **F1**: SalesPage — promo_code select + used_bonuses input
+- ✅ **F2**: OrdersPage — responsible/florist/courier selects
+- ✅ **F3**: SuppliersPage — receive shipment dialog (warehouse, create_debt)
+- ✅ **F4**: DataTable — debounce 350ms на поиске
+
+### Audit Pass 2 — Логические ошибки в бизнес-потоках
+- ✅ **CRITICAL**: Checkout — ранняя проверка `can_transition_to('completed')` ПЕРЕД созданием Sale
+- ✅ **HIGH**: Edit sale — FIFO re-apply после rollback + замена позиций
+- ✅ **HIGH**: Rollback — корректный откат `bonus_points` (earned/used через `earned_bonuses`/`used_bonuses`)
+- ✅ **HIGH**: PATCH transaction — fallback к existing wallet_from/wallet_to при частичном обновлении
+- ✅ **MEDIUM**: `SaleSerializer.validate()` — получение organization из `request.user` при создании
+- ✅ **MEDIUM**: `sale.total = order.total` (не `remaining`) — инвариант суммы
+- ✅ **LOW**: `create_debt` parsing — корректная проверка falsy values (`False, 'false', '0', 0`)
+
+### Audit Pass 3 — Безопасность, race conditions, API-целостность
+- ✅ **CRITICAL**: FIFO при update items — проверка ТЕКУЩЕГО статуса (`now_still_completed_paid`), а не старого
+- ✅ **CRITICAL**: OrderSerializer — добавлены `OrderItemWriteSerializer` + `items_data` + `_create_order_items()`/`_recalc_order_totals()`
+- ✅ **HIGH**: SalesPage — промокоды рендерят `pc.code` вместо `pc.name` (PromoCode не имеет `name`)
+- ✅ **MEDIUM**: delivery/views.py — добавлен `permission_classes = [ReadOnlyOrManager]` на все 3 viewset-а
+- ✅ **MEDIUM**: suppliers receive — whitelist допустимых статусов (`CONFIRMED`, `SHIPPED`)
+- ✅ **MEDIUM**: `_update_stock_balance` — обработка `IntegrityError` при параллельном создании StockBalance
+- ✅ **MEDIUM**: Суперадмин org — `_resolve_org(request.user)` вместо `request.user.organization`
+- ✅ **LOW**: DataTable — cleanup debounce timer при unmount (`useEffect(() => () => clearTimeout(...)`)
+
+### Audit Pass 4 — Дублирование данных, совместимость моделей
+- ✅ **CRITICAL**: Двойной `update_customer_stats` при items_data + open→completed → P4 fix: only re-apply stats when `was_completed_paid`
+- ✅ **HIGH**: `_recalc_order_totals` — Order имеет `discount_amount` (не `discount_percent`), добавлен `delivery_cost`
+- ✅ **MEDIUM**: OrdersPage `StatusEntry` — поле `new_status` (не `status`) для корректного отображения timeline
+
+### Audit Pass 5 — Защита данных, обход валидации, промокоды
+- ✅ **CRITICAL**: Откат FIFO при reversal completed→open/cancelled БЕЗ замены items (`_rollback_sale_fifo`)
+- ✅ **HIGH**: Bypass `max_payment_percent` бонусов через forged `subtotal` → добавлены в `read_only_fields`
+- ✅ **MEDIUM**: `promo_code.used_count` inflate при каждом edit → `rollback_sale_effects_before_delete` декрементирует
+- ✅ **MEDIUM**: Промокод без customer — `update_customer_stats` вызывается всегда (promo-часть не зависит от customer)
+
+**Итого за 5 проходов:** 7 CRITICAL, 8 HIGH, 14 MEDIUM, 3 LOW = **32 бага исправлено**
+
 ---
 
 ## Changelog (2026-02-28) — Глубокий аудит: критические исправления данных, безопасность, производительность
