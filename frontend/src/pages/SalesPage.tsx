@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Box, Typography, Chip, TextField, MenuItem, Button,
-  IconButton, Divider, Autocomplete, Collapse,
+  IconButton, Divider, Autocomplete, Collapse, Tab, Tabs, Paper,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
-import { Delete, ShoppingCart, AddCircleOutline, ExpandMore, ExpandLess } from '@mui/icons-material'
+import {
+  Delete, ShoppingCart, AddCircleOutline, ExpandMore, ExpandLess,
+  ListAlt, Assessment, TrendingUp, ReceiptLong, AutoGraph, Store, Refresh, Percent,
+} from '@mui/icons-material'
 import { useLocation } from 'react-router-dom'
 import api from '../api'
 import { useAuth } from '../contexts/AuthContext'
@@ -55,6 +58,25 @@ interface BouquetTemplateRef {
   nomenclature: string
   components: { nomenclature_name: string; quantity: string }[]
 }
+interface ShiftReport {
+  shift_id: string
+  trading_point_id: string
+  trading_point_name: string
+  opened_at: string
+  closed_at: string | null
+  opened_by: string
+  closed_by: string
+  status: string
+  sales_count: number
+  revenue: string
+  cost: string
+  gross_profit: string
+  margin_pct: string
+  avg_check: string
+  balance_at_open: string
+  actual_balance_at_close: string | null
+  notes: string
+}
 
 // ─── Constants ───
 const STATUS_CHOICES: { value: string; label: string; color: 'warning' | 'success' | 'error' }[] = [
@@ -64,8 +86,29 @@ const STATUS_CHOICES: { value: string; label: string; color: 'warning' | 'succes
 ]
 
 const fmtDate = (v: string) => v ? new Date(v).toLocaleDateString('ru-RU') : '—'
+const fmtDateTime = (v: string) => v
+  ? new Date(v).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  : '—'
 const fmtCurrency = (v: string | number) =>
   v != null ? parseFloat(String(v)).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—'
+
+// ─── KPI Card ───
+function KpiCard({ label, value, color, Icon }: { label: string; value: string; color: string; Icon: React.ElementType }) {
+  return (
+    <Paper elevation={0} sx={{
+      p: 2.5, textAlign: 'center', borderRadius: 2,
+      border: '1px solid', borderColor: 'divider',
+      borderTop: 3, borderTopColor: `${color}.main`,
+      transition: 'box-shadow .2s', '&:hover': { boxShadow: 3 },
+    }}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', mb: 0.5 }}>
+        <Icon sx={{ color: `${color}.main`, fontSize: 28 }} />
+      </Box>
+      <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.2 }}>{value}</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>{label}</Typography>
+    </Paper>
+  )
+}
 
 interface ItemRow {
   nomenclature: string
@@ -127,6 +170,9 @@ export default function SalesPage() {
 
   const customerName = (c: CustomerRef) => c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim()
 
+  // ─── Tabs ───
+  const [tab, setTab] = useState(0)
+
   // Stock info per nomenclature
   const stockByNom = useMemo(() => {
     const map: Record<string, { total: number; warehouses: { id: string; name: string; qty: number; isDefaultForSales: boolean }[]; preferredWarehouse?: string }> = {}
@@ -183,7 +229,55 @@ export default function SalesPage() {
       .finally(() => setLoading(false))
   }, [page, search, filterStatus, filterPaid, notify, user?.active_trading_point])
 
-  useEffect(() => { fetchSales() }, [fetchSales])
+  useEffect(() => { if (tab === 0) fetchSales() }, [tab, fetchSales])
+
+  // ─── TAB 2: Shift report ───
+  const today = new Date().toISOString().slice(0, 10)
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
+  const [shiftReport, setShiftReport] = useState<ShiftReport[]>([])
+  const [shiftLoading, setShiftLoading] = useState(false)
+  const [shiftFilters, setShiftFilters] = useState({ date_from: monthStart, date_to: today, trading_point: '' })
+  const [expandedShift, setExpandedShift] = useState<string | null>(null)
+  const [shiftSales, setShiftSales] = useState<Record<string, Sale[]>>({})
+  const [shiftSalesLoading, setShiftSalesLoading] = useState<string | null>(null)
+
+  const fetchShiftReport = useCallback(async () => {
+    setShiftLoading(true)
+    try {
+      const params: Record<string, string> = {}
+      if (shiftFilters.date_from) params.date_from = shiftFilters.date_from
+      if (shiftFilters.date_to) params.date_to = shiftFilters.date_to
+      if (shiftFilters.trading_point) params.trading_point = shiftFilters.trading_point
+      const res = await api.get('/sales/sales/shift-report/', { params })
+      setShiftReport(res.data || [])
+    } catch (err) { notify(extractError(err, 'Ошибка загрузки отчёта по сменам'), 'error') }
+    setShiftLoading(false)
+  }, [shiftFilters, notify])
+
+  useEffect(() => { if (tab === 1) fetchShiftReport() }, [tab, fetchShiftReport])
+
+  const shiftSummary = useMemo(() => {
+    const totalRevenue = shiftReport.reduce((s, r) => s + parseFloat(r.revenue || '0'), 0)
+    const totalCost = shiftReport.reduce((s, r) => s + parseFloat(r.cost || '0'), 0)
+    const totalSales = shiftReport.reduce((s, r) => s + r.sales_count, 0)
+    const totalProfit = totalRevenue - totalCost
+    const avgMarginPct = totalRevenue > 0 ? (totalProfit / totalRevenue * 100) : 0
+    const avgCheck = totalSales > 0 ? totalRevenue / totalSales : 0
+    return { totalRevenue, totalCost, totalProfit, avgMarginPct, avgCheck, totalSales }
+  }, [shiftReport])
+
+  const toggleShiftExpand = async (shiftId: string) => {
+    if (expandedShift === shiftId) { setExpandedShift(null); return }
+    setExpandedShift(shiftId)
+    if (!shiftSales[shiftId]) {
+      setShiftSalesLoading(shiftId)
+      try {
+        const res = await api.get('/sales/sales/', { params: { cash_shift: shiftId, page_size: 100 } })
+        setShiftSales(prev => ({ ...prev, [shiftId]: res.data.results || res.data || [] }))
+      } catch (err) { notify(extractError(err, 'Ошибка загрузки продаж смены'), 'error') }
+      setShiftSalesLoading(null)
+    }
+  }
 
   // ─── Create / Edit sale dialog ───
   const [saleDlg, setSaleDlg] = useState(false)
@@ -452,13 +546,30 @@ export default function SalesPage() {
   // ─── Render ───
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5" fontWeight={700}>Продажи</Typography>
-        <Button variant="contained" startIcon={<ShoppingCart />} onClick={openCreateDlg}>
-          Новая продажа
-        </Button>
+        {tab === 0 && (
+          <Button variant="contained" startIcon={<ShoppingCart />} onClick={openCreateDlg}>
+            Новая продажа
+          </Button>
+        )}
+        {tab === 1 && (
+          <Button variant="outlined" startIcon={<Refresh />} onClick={fetchShiftReport} disabled={shiftLoading}>
+            Обновить
+          </Button>
+        )}
       </Box>
 
+      {/* Tabs */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+        <Tabs value={tab} onChange={(_, v) => setTab(v)} textColor="primary" indicatorColor="primary">
+          <Tab icon={<ListAlt />} iconPosition="start" label="Список продаж" />
+          <Tab icon={<Assessment />} iconPosition="start" label="Отчёты по сменам" />
+        </Tabs>
+      </Box>
+
+      {/* ═══ TAB 1: Sales list ═══ */}
+      {tab === 0 && (<Box>
       {/* Filters */}
       <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
         <TextField
@@ -494,6 +605,139 @@ export default function SalesPage() {
         emptyText="Продаж пока нет"
         onRowClick={openDetail}
       />
+      </Box>)} {/* end tab 0 */}
+
+      {/* ═══ TAB 2: Shift Statistics ═══ */}
+      {tab === 1 && (<Box>
+        {/* Filters */}
+        <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
+          <TextField size="small" label="Дата с" type="date" value={shiftFilters.date_from}
+            onChange={e => setShiftFilters(f => ({ ...f, date_from: e.target.value }))}
+            slotProps={{ inputLabel: { shrink: true } }} sx={{ minWidth: 160 }} />
+          <TextField size="small" label="Дата по" type="date" value={shiftFilters.date_to}
+            onChange={e => setShiftFilters(f => ({ ...f, date_to: e.target.value }))}
+            slotProps={{ inputLabel: { shrink: true } }} sx={{ minWidth: 160 }} />
+          <TextField select size="small" label="Торговая точка" value={shiftFilters.trading_point}
+            onChange={e => setShiftFilters(f => ({ ...f, trading_point: e.target.value }))}
+            sx={{ minWidth: 190 }}>
+            <MenuItem value="">Все точки</MenuItem>
+            {tradingPoints.map(tp => <MenuItem key={tp.id} value={tp.id}>{tp.name}</MenuItem>)}
+          </TextField>
+        </Box>
+
+        {/* KPI Cards */}
+        {shiftReport.length > 0 && (
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            {([
+              { label: 'Выручка', value: fmtCurrency(shiftSummary.totalRevenue), color: 'primary', Icon: TrendingUp },
+              { label: 'Себестоимость', value: fmtCurrency(shiftSummary.totalCost), color: 'warning', Icon: ReceiptLong },
+              { label: 'Валовая прибыль', value: fmtCurrency(shiftSummary.totalProfit), color: 'success', Icon: AutoGraph },
+              {
+                label: 'Маржинальность',
+                value: `${shiftSummary.avgMarginPct.toFixed(1)}%`,
+                color: shiftSummary.avgMarginPct >= 40 ? 'success' : shiftSummary.avgMarginPct >= 20 ? 'warning' : 'error',
+                Icon: Percent,
+              },
+              { label: 'Средний чек', value: fmtCurrency(shiftSummary.avgCheck), color: 'info', Icon: Store },
+              { label: 'Всего чеков', value: String(shiftSummary.totalSales), color: 'secondary', Icon: ShoppingCart },
+            ] as { label: string; value: string; color: string; Icon: React.ElementType }[]).map(card => (
+              <Grid key={card.label} size={{ xs: 6, sm: 4, md: 2 }}>
+                <KpiCard {...card} />
+              </Grid>
+            ))}
+          </Grid>
+        )}
+
+        {/* Shift table header */}
+        {shiftReport.length > 0 && (
+          <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: '8px 8px 0 0', bgcolor: 'action.hover', px: 2, py: 1, mb: 0 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '155px 155px 1fr 1fr 1fr 100px 60px 135px 115px 120px 85px 115px 40px', gap: 0, alignItems: 'center' }}>
+              {['Открыта', 'Закрыта', 'Точка', 'Открыл', 'Закрыл', 'Статус', 'Чеков', 'Выручка', 'Себест.', 'Прибыль', 'Маржа%', 'Ср. чек', ''].map(h => (
+                <Typography key={h} variant="caption" fontWeight={700} color="text.secondary">{h}</Typography>
+              ))}
+            </Box>
+          </Paper>
+        )}
+
+        {/* Shift rows */}
+        {shiftLoading ? (
+          <Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>Загрузка...</Typography>
+        ) : shiftReport.length === 0 ? (
+          <Paper elevation={0} sx={{ p: 6, textAlign: 'center', border: '1px dashed', borderColor: 'divider', borderRadius: 2 }}>
+            <Assessment sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
+            <Typography color="text.secondary">Смен за выбранный период не найдено</Typography>
+            <Typography variant="caption" color="text.disabled" sx={{ mt: 0.5, display: 'block' }}>Попробуйте изменить период или фильтры</Typography>
+          </Paper>
+        ) : (
+          <Box>
+            {shiftReport.map((shift, idx) => (
+              <Paper key={shift.shift_id} elevation={0} sx={{
+                mb: 0, border: '1px solid', borderTop: idx === 0 ? 0 : '1px solid',
+                borderColor: 'divider',
+                borderRadius: idx === shiftReport.length - 1 ? '0 0 8px 8px' : 0,
+                overflow: 'hidden',
+                '&:hover': { bgcolor: 'action.hover' }, transition: 'background .15s',
+              }}>
+                <Box sx={{
+                  display: 'grid', gridTemplateColumns: '155px 155px 1fr 1fr 1fr 100px 60px 135px 115px 120px 85px 115px 40px',
+                  gap: 0, px: 2, py: 1.5, alignItems: 'center', cursor: 'pointer',
+                  bgcolor: expandedShift === shift.shift_id ? 'action.selected' : 'transparent',
+                }} onClick={() => toggleShiftExpand(shift.shift_id)}>
+                  <Typography variant="body2">{fmtDateTime(shift.opened_at)}</Typography>
+                  <Typography variant="body2">{shift.closed_at ? fmtDateTime(shift.closed_at) : <span style={{ color: '#2e7d32', fontWeight: 600 }}>Открыта</span>}</Typography>
+                  <Typography variant="body2" noWrap>{shift.trading_point_name || '—'}</Typography>
+                  <Typography variant="body2" color="text.secondary" noWrap>{shift.opened_by || '—'}</Typography>
+                  <Typography variant="body2" color="text.secondary" noWrap>{shift.closed_by || '—'}</Typography>
+                  <Box><Chip label={shift.status === 'open' ? 'Открыта' : 'Закрыта'} size="small" color={shift.status === 'open' ? 'success' : 'default'} /></Box>
+                  <Typography variant="body2" fontWeight={700} textAlign="center">{shift.sales_count}</Typography>
+                  <Typography variant="body2" fontWeight={700} textAlign="right">{fmtCurrency(shift.revenue)}</Typography>
+                  <Typography variant="body2" color="text.secondary" textAlign="right">{fmtCurrency(shift.cost)}</Typography>
+                  <Typography variant="body2" color="success.main" fontWeight={600} textAlign="right">{fmtCurrency(shift.gross_profit)}</Typography>
+                  <Typography variant="body2" fontWeight={700} textAlign="right"
+                    color={parseFloat(shift.margin_pct) >= 40 ? 'success.main' : parseFloat(shift.margin_pct) >= 20 ? 'warning.main' : 'error.main'}>
+                    {parseFloat(shift.margin_pct).toFixed(1)}%
+                  </Typography>
+                  <Typography variant="body2" textAlign="right">{fmtCurrency(shift.avg_check)}</Typography>
+                  <IconButton size="small">{expandedShift === shift.shift_id ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}</IconButton>
+                </Box>
+
+                <Collapse in={expandedShift === shift.shift_id}>
+                  <Divider />
+                  <Box sx={{ p: 2, bgcolor: 'action.hover' }}>
+                    {shiftSalesLoading === shift.shift_id ? (
+                      <Typography variant="body2" color="text.secondary">Загрузка продаж...</Typography>
+                    ) : (shiftSales[shift.shift_id] || []).length === 0 ? (
+                      <Typography variant="body2" color="text.secondary">Нет продаж за эту смену</Typography>
+                    ) : (
+                      <Box>
+                        <Box sx={{ display: 'grid', gridTemplateColumns: '80px 1fr 1fr 1fr 110px auto', gap: 1, mb: 0.5, px: 1 }}>
+                          {['№ чека', 'Клиент', 'Продавец', 'Статус', 'Оплата', 'Сумма'].map(h => (
+                            <Typography key={h} variant="caption" fontWeight={600} color="text.secondary">{h}</Typography>
+                          ))}
+                        </Box>
+                        {(shiftSales[shift.shift_id] || []).map(sale => (
+                          <Box key={sale.id} sx={{
+                            display: 'grid', gridTemplateColumns: '80px 1fr 1fr 1fr 110px auto',
+                            gap: 1, px: 1, py: 0.5, borderRadius: 1,
+                            '&:hover': { bgcolor: 'action.selected', cursor: 'pointer' },
+                          }} onClick={e => { e.stopPropagation(); openDetail(sale) }}>
+                            <Typography variant="body2">#{sale.number}</Typography>
+                            <Typography variant="body2" noWrap>{sale.customer_name || '—'}</Typography>
+                            <Typography variant="body2" noWrap>{sale.seller_name || '—'}</Typography>
+                            <Box><Chip label={STATUS_CHOICES.find(s => s.value === sale.status)?.label || sale.status} size="small" color={STATUS_CHOICES.find(s => s.value === sale.status)?.color || 'default'} /></Box>
+                            <Box><Chip label={sale.is_paid ? 'Оплачено' : 'Не оплачено'} size="small" color={sale.is_paid ? 'success' : 'default'} variant={sale.is_paid ? 'filled' : 'outlined'} /></Box>
+                            <Typography variant="body2" fontWeight={600} textAlign="right">{fmtCurrency(sale.total)}</Typography>
+                          </Box>
+                        ))}
+                      </Box>
+                    )}
+                  </Box>
+                </Collapse>
+              </Paper>
+            ))}
+          </Box>
+        )}
+      </Box>)} {/* end tab 1 */}
 
       {/* ═══ Create / Edit Sale Dialog ═══ */}
       <EntityFormDialog

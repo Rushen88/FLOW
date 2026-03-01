@@ -4,6 +4,7 @@ from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import transaction as db_transaction
+from django.db.models import Sum, Count, F
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Sale, SaleItem, Order, OrderItem
 from .serializers import (
@@ -11,7 +12,7 @@ from .serializers import (
     OrderSerializer, OrderListSerializer, OrderItemSerializer,
 )
 from .services import rollback_sale_effects_before_delete
-from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, ReadOnlyOrManager
+from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, _resolve_org, ReadOnlyOrManager
 
 
 class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
@@ -61,6 +62,84 @@ class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         instance = self.get_object()
         rollback_sale_effects_before_delete(instance)
         return super().destroy(request, *args, **kwargs)
+
+    @action(detail=False, methods=['get'], url_path='shift-report')
+    def shift_report(self, request):
+        """Отчёт по кассовым сменам: выручка, себестоимость, прибыль, маржа, средний чек."""
+        from apps.finance.models import CashShift
+
+        org = _resolve_org(request.user)
+        if not org:
+            return Response([])
+
+        tp_id = request.query_params.get('trading_point')
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+
+        shifts_qs = CashShift.objects.filter(organization=org).select_related(
+            'trading_point', 'opened_by', 'closed_by'
+        )
+        if tp_id:
+            shifts_qs = shifts_qs.filter(trading_point_id=tp_id)
+        if date_from:
+            shifts_qs = shifts_qs.filter(opened_at__date__gte=date_from)
+        if date_to:
+            shifts_qs = shifts_qs.filter(opened_at__date__lte=date_to)
+        shifts_qs = shifts_qs.order_by('-opened_at')[:100]
+
+        result = []
+        for shift in shifts_qs:
+            completed_sales = Sale.objects.filter(
+                cash_shift=shift,
+                status=Sale.Status.COMPLETED,
+                is_paid=True,
+            )
+            sale_agg = completed_sales.aggregate(
+                revenue=Sum('total'),
+                count=Count('id'),
+            )
+            revenue = sale_agg['revenue'] or Decimal('0')
+            count = sale_agg['count'] or 0
+
+            # Себестоимость: сумма (cost_price * quantity) по позициям продаж этой смены
+            cost_agg = SaleItem.objects.filter(
+                sale__in=completed_sales
+            ).aggregate(
+                cost=Sum(F('cost_price') * F('quantity'))
+            )
+            cost = cost_agg['cost'] or Decimal('0')
+
+            gross_profit = revenue - cost
+            margin_pct = (
+                (gross_profit / revenue * 100).quantize(Decimal('0.1'))
+                if revenue > 0 else Decimal('0')
+            )
+            avg_check = (
+                (revenue / count).quantize(Decimal('0.01'))
+                if count > 0 else Decimal('0')
+            )
+
+            result.append({
+                'shift_id': str(shift.id),
+                'trading_point_id': str(shift.trading_point_id) if shift.trading_point_id else '',
+                'trading_point_name': shift.trading_point.name if shift.trading_point else '',
+                'opened_at': shift.opened_at.isoformat() if shift.opened_at else None,
+                'closed_at': shift.closed_at.isoformat() if shift.closed_at else None,
+                'opened_by': shift.opened_by.get_full_name() if shift.opened_by else '',
+                'closed_by': shift.closed_by.get_full_name() if shift.closed_by else '',
+                'status': shift.status,
+                'sales_count': count,
+                'revenue': str(revenue),
+                'cost': str(cost),
+                'gross_profit': str(gross_profit),
+                'margin_pct': str(margin_pct),
+                'avg_check': str(avg_check),
+                'balance_at_open': str(shift.balance_at_open),
+                'actual_balance_at_close': str(shift.actual_balance_at_close) if shift.actual_balance_at_close is not None else None,
+                'notes': shift.notes or '',
+            })
+
+        return Response(result)
 
 
 class SaleItemViewSet(viewsets.ModelViewSet):
