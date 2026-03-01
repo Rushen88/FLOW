@@ -44,6 +44,11 @@ export default function DataTable({
 
   useEffect(() => { setLocalSearch(search || '') }, [search])
 
+  // P3-LOW: Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [])
+
   const handleSearchChange = (v: string) => {
     setLocalSearch(v)
     if (debounceRef.current) clearTimeout(debounceRef.current)

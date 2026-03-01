@@ -215,7 +215,7 @@ export default function OrdersPage() {
         responsible: orderForm.responsible || null,
         florist: orderForm.florist || null,
         courier: orderForm.courier || null,
-        items: validItems.map(it => ({
+        items_data: validItems.map(it => ({
           nomenclature: it.nomenclature,
           quantity: it.quantity,
           price: it.price,

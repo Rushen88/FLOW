@@ -82,6 +82,8 @@ def _update_stock_balance(organization, warehouse, nomenclature, qty_delta: Deci
     from django.db.models import Sum, F
 
     # select_for_update предотвращает race condition при параллельных запросах
+    # P3-MEDIUM: Обработка race condition при параллельном создании StockBalance
+    from django.db import IntegrityError as DjangoIntegrityError
     try:
         sb = (
             StockBalance.objects.select_for_update()
@@ -92,13 +94,23 @@ def _update_stock_balance(organization, warehouse, nomenclature, qty_delta: Deci
             )
         )
     except StockBalance.DoesNotExist:
-        sb = StockBalance.objects.create(
-            organization=organization,
-            warehouse=warehouse,
-            nomenclature=nomenclature,
-            quantity=Decimal('0'),
-            avg_purchase_price=Decimal('0'),
-        )
+        try:
+            sb = StockBalance.objects.create(
+                organization=organization,
+                warehouse=warehouse,
+                nomenclature=nomenclature,
+                quantity=Decimal('0'),
+                avg_purchase_price=Decimal('0'),
+            )
+        except DjangoIntegrityError:
+            sb = (
+                StockBalance.objects.select_for_update()
+                .get(
+                    organization=organization,
+                    warehouse=warehouse,
+                    nomenclature=nomenclature,
+                )
+            )
     sb.quantity += qty_delta
 
     # Пересчитываем среднюю закупочную через DB aggregate (вместо Python-loop)

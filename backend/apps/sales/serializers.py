@@ -100,11 +100,12 @@ class SaleSerializer(serializers.ModelSerializer):
         promo = attrs.get('promo_code') or (self.instance.promo_code if self.instance else None)
         organization = attrs.get('organization') or (self.instance.organization if self.instance else None)
 
-        # P2-MEDIUM: При создании organization ещё не установлена — берём из request.user
+        # P3-MEDIUM: При создании organization ещё не установлена — используем _resolve_org для корректной работы с суперадмином
         if not organization:
             request = self.context.get('request')
-            if request and hasattr(request, 'user') and hasattr(request.user, 'organization'):
-                organization = request.user.organization
+            if request:
+                from apps.core.mixins import _resolve_org
+                organization = _resolve_org(request.user)
 
         # H3: проверка что бонусов хватает
         if used_bonuses > 0:
@@ -262,8 +263,10 @@ class SaleSerializer(serializers.ModelSerializer):
                         item_data['batch'] = batch
                 SaleItem.objects.create(sale=instance, **item_data)
             recalc_sale_totals(instance)
-            # P2-HIGH: Если была completed+paid, переприменяем FIFO и статистику
-            if was_completed_paid:
+            # P3-CRITICAL: Проверяем ТЕКУЩИЙ статус, а не старый — если статус сменился на open,
+            # FIFO-списание не должно происходить
+            now_still_completed_paid = (instance.status == Sale.Status.COMPLETED and instance.is_paid)
+            if now_still_completed_paid:
                 warnings = do_sale_fifo_write_off(instance)
                 if warnings:
                     self.context.setdefault('sale_warnings', []).extend(warnings)
@@ -318,6 +321,17 @@ class OrderItemSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class OrderItemWriteSerializer(serializers.ModelSerializer):
+    """Сериализатор позиции заказа для записи (P3-CRITICAL)."""
+    class Meta:
+        model = OrderItem
+        fields = ['nomenclature', 'quantity', 'price', 'discount_percent', 'is_custom_bouquet']
+        extra_kwargs = {
+            'discount_percent': {'required': False, 'default': 0},
+            'is_custom_bouquet': {'required': False, 'default': False},
+        }
+
+
 class OrderStatusHistorySerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderStatusHistory
@@ -327,6 +341,7 @@ class OrderStatusHistorySerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
+    items_data = OrderItemWriteSerializer(many=True, write_only=True, required=False)
     status_history = OrderStatusHistorySerializer(many=True, read_only=True)
     customer_name = serializers.SerializerMethodField()
 
@@ -338,8 +353,33 @@ class OrderSerializer(serializers.ModelSerializer):
     def get_customer_name(self, obj):
         return str(obj.customer) if obj.customer else ''
 
+    def _recalc_order_totals(self, order):
+        """Пересчёт subtotal / total заказа по позициям."""
+        from decimal import Decimal
+        items = order.items.all()
+        subtotal = Decimal('0')
+        for it in items:
+            subtotal += it.total
+        order.subtotal = subtotal
+        discount = order.discount_percent or Decimal('0')
+        order.total = subtotal * (Decimal('1') - discount / Decimal('100'))
+        order.save(update_fields=['subtotal', 'total'])
+
+    def _create_order_items(self, order, items_data):
+        """Создаёт позиции заказа и пересчитывает итоги."""
+        from decimal import Decimal
+        for item_data in items_data:
+            qty = Decimal(str(item_data['quantity']))
+            price = Decimal(str(item_data['price']))
+            disc = Decimal(str(item_data.get('discount_percent', 0)))
+            total = qty * price * (Decimal('1') - disc / Decimal('100'))
+            OrderItem.objects.create(order=order, total=total, **item_data)
+        self._recalc_order_totals(order)
+
     @db_transaction.atomic
     def create(self, validated_data):
+        items_data = validated_data.pop('items_data', [])
+
         organization = validated_data.get('organization')
         if not organization:
             raise serializers.ValidationError({'organization': 'Организация обязательна.'})
@@ -350,6 +390,10 @@ class OrderSerializer(serializers.ModelSerializer):
             validated_data['number'] = generate_order_number(validated_data['organization'])
 
         order = Order.objects.create(**validated_data)
+
+        # P3-CRITICAL: Создаём позиции заказа
+        if items_data:
+            self._create_order_items(order, items_data)
 
         create_order_status_history(
             order=order,
@@ -362,6 +406,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
     @db_transaction.atomic
     def update(self, instance, validated_data):
+        items_data = validated_data.pop('items_data', None)
         old_status = instance.status
 
         new_status = validated_data.get('status', old_status)
@@ -371,6 +416,11 @@ class OrderSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'status': str(exc)}) from exc
 
         order = super().update(instance, validated_data)
+
+        # P3-CRITICAL: Обновление позиций заказа
+        if items_data is not None:
+            order.items.all().delete()
+            self._create_order_items(order, items_data)
 
         if new_status != old_status:
             create_order_status_history(

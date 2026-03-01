@@ -76,10 +76,15 @@ class SupplierOrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 
         order = self.get_object()
 
+        # P3-MEDIUM: Whitelist допустимых статусов для приёмки
+        allowed_statuses = [SupplierOrder.Status.CONFIRMED, SupplierOrder.Status.SHIPPED]
         if order.status == SupplierOrder.Status.RECEIVED:
             return Response({'detail': 'Поставка уже принята.'}, status=status.HTTP_400_BAD_REQUEST)
-        if order.status == SupplierOrder.Status.CANCELLED:
-            return Response({'detail': 'Отменённый заказ нельзя принять.'}, status=status.HTTP_400_BAD_REQUEST)
+        if order.status not in allowed_statuses and order.status != SupplierOrder.Status.RECEIVED:
+            return Response(
+                {'detail': f'Принять можно только подтверждённый или отгруженный заказ (текущий: {order.get_status_display()}).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         warehouse_id = request.data.get('warehouse')
         raw_debt = request.data.get('create_debt', True)

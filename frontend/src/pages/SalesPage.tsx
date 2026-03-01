@@ -90,7 +90,7 @@ export default function SalesPage() {
   const [users, setUsers] = useState<UserRef[]>([])
   const [bouquetTemplates, setBouquetTemplates] = useState<BouquetTemplateRef[]>([])
   const [stockSummary, setStockSummary] = useState<StockSummary[]>([])
-  const [promoCodes, setPromoCodes] = useState<Ref[]>([])
+  const [promoCodes, setPromoCodes] = useState<{id: string; code: string}[]>([])
 
   const fetchHelpers = useCallback(async () => {
     try {
@@ -563,7 +563,7 @@ export default function SalesPage() {
               onChange={e => setSaleForm(f => ({ ...f, promo_code: e.target.value }))}
             >
               <MenuItem value="">— Без промокода —</MenuItem>
-              {promoCodes.map(pc => <MenuItem key={pc.id} value={pc.id}>{pc.name}</MenuItem>)}
+              {promoCodes.map(pc => <MenuItem key={pc.id} value={pc.id}>{pc.code}</MenuItem>)}
             </TextField>
           </Grid>
           <Grid size={2}>
