@@ -1299,3 +1299,12 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS earned_bonuses NUMERIC(12,2) DEFAULT
 ### Доработки Архитектуры (Sales & Delivery):
 - Внедрен интерактивный **Kanban Board** для страницы заказов с поддержкой Drag-and-Drop.
 - В модель Order (sales) добавлено поле sk_recipient_address, проброшено на фронтенд. Разрешена логика анонимной доставки с отложенным получением адреса.
+
+
+### 3.1.5 Enterprise SaaS Patterns (Added in Audit)
+
+*   **Soft Deletion**: All critical models inherit from SoftDeletableModel. Real DELETE is blocked to prevent data loss or breakage of old analytical records. Instead, is_deleted=True is used.
+*   **Analytics Materialization**: Calculating revenue over millions of transactions on-the-fly kills performance. We use Celery background tasks to populate continuous analytical data.
+*   **Race condition protection (FIFO)**: Implemented strict select_for_update(skip_locked=False) during stock interactions (pps/inventory/services.py). Double reservation and negative numbers are mathematically impossible at DB layer.
+*   **Caching**: DRF iewsets cache reference data using 
+edis:7-alpine. It skips DB reads entirely for heavy dictionaries.

@@ -1,3 +1,5 @@
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
 from rest_framework import viewsets, filters
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
@@ -26,6 +28,7 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         return qs.distinct()
 
 
+@method_decorator(cache_page(60 * 60 * 24), name='dispatch') # Кеш на сутки, справочник общий
 class MeasureUnitViewSet(viewsets.ModelViewSet):
     """
     Единицы измерения — общий справочник.

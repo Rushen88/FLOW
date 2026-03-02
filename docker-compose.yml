@@ -1,4 +1,10 @@
 services:
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - '6379:6379'
   db:
     image: postgres:15
     volumes:
@@ -26,6 +32,39 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    restart: always
+
+  
+  celery:
+    build: ./backend
+    command: celery -A config worker -l info
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - backend
+      - redis
+    restart: always
+
+  celery-beat:
+    build: ./backend
+    command: celery -A config beat -l info
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - backend
+      - redis
     restart: always
 
   frontend:

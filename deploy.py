@@ -61,6 +61,8 @@ DB_PORT=5432
     # 3. Run docker compose
     print("Building and starting Docker containers...")
     run_command(ssh, 'cd /root/FLOW && docker compose up -d --build')
+    print('Run migrations...')
+    run_command(ssh, 'cd /root/FLOW && docker compose exec backend python manage.py migrate')
     
     print("Deployment finished!")
     

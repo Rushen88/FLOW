@@ -1,3 +1,4 @@
+from apps.core.models import SoftDeletableModel
 import uuid
 from django.db import models
 
@@ -41,7 +42,7 @@ class MeasureUnit(models.Model):
         return self.short_name
 
 
-class Nomenclature(models.Model):
+class Nomenclature(SoftDeletableModel):
     """Номенклатура товаров."""
 
     class NomenclatureType(models.TextChoices):
