@@ -93,7 +93,7 @@ class Nomenclature(models.Model):
     image = models.ImageField('Фото', upload_to='nomenclature/', blank=True, null=True)
     color = models.CharField('Цвет', max_length=50, blank=True, default='')
     country = models.CharField('Страна', max_length=100, blank=True, default='')
-    shelf_life_days = models.PositiveIntegerField('Срок годности (дней)', null=True, blank=True)
+    default_shelf_life_days = models.PositiveIntegerField('Срок годности по умолчанию (дней)', null=True, blank=True)
     min_stock = models.DecimalField(
         'Мин. остаток', max_digits=10, decimal_places=2, default=0,
     )

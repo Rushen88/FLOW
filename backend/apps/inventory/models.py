@@ -47,6 +47,12 @@ class Batch(models.Model):
             ),
         ]
 
+    def save(self, *args, **kwargs):
+        if not self.expiry_date and self.nomenclature.default_shelf_life_days:
+            from datetime import timedelta
+            self.expiry_date = self.arrival_date + timedelta(days=self.nomenclature.default_shelf_life_days)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f'{self.nomenclature.name} — {self.quantity} ({self.arrival_date})'
 

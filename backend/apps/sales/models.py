@@ -160,6 +160,7 @@ class Order(models.Model):
     delivery_time_from = models.TimeField('Доставка с', null=True, blank=True)
     delivery_time_to = models.TimeField('Доставка до', null=True, blank=True)
     is_anonymous = models.BooleanField('Анонимная доставка', default=False)
+    ask_recipient_address = models.BooleanField('Уточнить адрес у получателя', default=False)
     card_text = models.TextField('Текст открытки', blank=True, default='')
     subtotal = models.DecimalField('Сумма', max_digits=12, decimal_places=2, default=0)
     delivery_cost = models.DecimalField('Стоимость доставки', max_digits=10, decimal_places=2, default=0)
@@ -320,3 +321,49 @@ class OrderStatusHistory(models.Model):
         verbose_name = 'История статуса заказа'
         verbose_name_plural = 'История статусов заказов'
         ordering = ['-created_at']
+
+
+class SaleItemComposition(models.Model):
+    """Состав позиции продажи (для авторских букетов)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    sale_item = models.ForeignKey(
+        SaleItem, on_delete=models.CASCADE,
+        related_name='components', verbose_name='Позиция продажи',
+    )
+    nomenclature = models.ForeignKey(
+        'nomenclature.Nomenclature', on_delete=models.PROTECT,
+        related_name='+', verbose_name='Номенклатура',
+    )
+    quantity = models.DecimalField('Количество', max_digits=10, decimal_places=2)
+    price = models.DecimalField('Цена за ед.', max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        db_table = 'sale_item_compositions'
+        verbose_name = 'Состав позиции продажи'
+        verbose_name_plural = 'Составы позиций продаж'
+
+    def __str__(self):
+        return f'{self.nomenclature.name} x{self.quantity} в {self.sale_item}'
+
+
+class OrderItemComposition(models.Model):
+    """Состав позиции заказа (для авторских букетов)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order_item = models.ForeignKey(
+        OrderItem, on_delete=models.CASCADE,
+        related_name='components', verbose_name='Позиция заказа',
+    )
+    nomenclature = models.ForeignKey(
+        'nomenclature.Nomenclature', on_delete=models.PROTECT,
+        related_name='+', verbose_name='Номенклатура',
+    )
+    quantity = models.DecimalField('Количество', max_digits=10, decimal_places=2)
+    price = models.DecimalField('Цена за ед.', max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        db_table = 'order_item_compositions'
+        verbose_name = 'Состав позиции заказа'
+        verbose_name_plural = 'Составы позиций заказов'
+
+    def __str__(self):
+        return f'{self.nomenclature.name} x{self.quantity} в {self.order_item}'

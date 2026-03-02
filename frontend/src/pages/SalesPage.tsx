@@ -117,8 +117,10 @@ interface ItemRow {
   price: string
   discount_percent: string
   total: string
+  is_custom_bouquet?: boolean
+  bouquet_components?: { nomenclature: string; name?: string; quantity: string; price: string }[]
 }
-const emptyItemRow = (): ItemRow => ({ nomenclature: '', warehouse: '', quantity: '1', price: '', discount_percent: '0', total: '0' })
+const emptyItemRow = (): ItemRow => ({ nomenclature: '', warehouse: '', quantity: '1', price: '', discount_percent: '0', total: '0', is_custom_bouquet: false, bouquet_components: [] })
 
 export default function SalesPage() {
   const { user } = useAuth()
@@ -475,6 +477,60 @@ export default function SalesPage() {
   const [detailSale, setDetailSale] = useState<Sale | null>(null)
   const [detailItems, setDetailItems] = useState<SaleItem[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
+  
+  // ─── Custom Bouquet Dialog ───
+  const [customBqDlg, setCustomBqDlg] = useState<{ open: boolean; idx: number }>({ open: false, idx: -1 })
+  const [cbComponents, setCbComponents] = useState<{ nomenclature: string; name: string; quantity: string; price: string; stockTotal: number }[]>([])
+  
+  const openCustomBouquet = (idx: number) => {
+    const item = saleItems[idx]
+    if (item.bouquet_components && item.bouquet_components.length > 0) {
+      setCbComponents(item.bouquet_components.map(c => ({ ...c, name: c.name || '', stockTotal: 0 })))
+    } else {
+      setCbComponents([])
+    }
+    setCustomBqDlg({ open: true, idx })
+  }
+  
+  const addCbComponent = () => setCbComponents(p => [...p, { nomenclature: '', name: '', quantity: '1', price: '0', stockTotal: 0 }])
+  const removeCbComponent = (ci: number) => setCbComponents(p => p.filter((_, i) => i !== ci))
+  const updateCbComponent = (ci: number, field: string, val: string) => {
+    setCbComponents(p => {
+      const copy = [...p]
+      copy[ci] = { ...copy[ci], [field]: val }
+      if (field === 'nomenclature') {
+        const nom = nomenclatures.find(n => n.id === val)
+        if (nom) {
+          copy[ci].name = nom.name;
+          copy[ci].price = nom.retail_price || '0';
+        }
+      }
+      return copy
+    })
+  }
+
+  const saveCustomBouquet = () => {
+    setSaleItems(prev => {
+      const copy = [...prev]
+      const valid = cbComponents.filter(c => c.nomenclature && parseFloat(c.quantity) > 0)
+      if (valid.length > 0) {
+        copy[customBqDlg.idx].is_custom_bouquet = true
+        copy[customBqDlg.idx].bouquet_components = valid
+        // Auto calculate price
+        const totalPrice = valid.reduce((sum, c) => sum + (parseFloat(c.price) || 0) * (parseFloat(c.quantity) || 0), 0)
+        copy[customBqDlg.idx].price = String(totalPrice)
+        const qty = parseFloat(copy[customBqDlg.idx].quantity) || 1
+        const disc = parseFloat(copy[customBqDlg.idx].discount_percent) || 0
+        copy[customBqDlg.idx].total = (qty * totalPrice * (1 - disc / 100)).toFixed(2)
+      } else {
+        copy[customBqDlg.idx].is_custom_bouquet = false
+        copy[customBqDlg.idx].bouquet_components = []
+      }
+      return copy
+    })
+    setCustomBqDlg({ open: false, idx: -1 })
+  }
+
   const [expandedBouquets, setExpandedBouquets] = useState<Record<string, boolean>>({})
 
   const openDetail = async (sale: Sale) => {
@@ -843,7 +899,9 @@ export default function SalesPage() {
             <Box key={idx} sx={{ mb: 1 }}>
               <Grid container spacing={1.5} alignItems="center">
                 <Grid size={3}>
-                  <Autocomplete
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Autocomplete
+                      sx={{ flex: 1 }}
                     size="small"
                     options={nomOptions}
                     getOptionLabel={opt => typeof opt === 'string' ? opt : `${opt.name} ${opt.stockLabel}`}
@@ -863,6 +921,12 @@ export default function SalesPage() {
                     renderInput={params => <TextField {...params} label="Номенклатура" />}
                     noOptionsText="Не найдено"
                   />
+                  {itemNom?.name.toLowerCase().includes('авторский') && (
+                    <IconButton size="small" color="primary" onClick={() => openCustomBouquet(idx)} sx={{ flexShrink: 0 }}>
+                      <span style={{ fontSize: '1.2rem', lineHeight: 1 }}>★</span>
+                    </IconButton>
+                  )}
+                </Box>
                 </Grid>
                 <Grid size={2}>
                   <TextField

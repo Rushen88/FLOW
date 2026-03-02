@@ -98,9 +98,27 @@ class TransactionViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         from rest_framework.exceptions import MethodNotAllowed
         raise MethodNotAllowed('PUT/PATCH', detail='Изменение финансовых транзакций запрещено архитектурой (Double-Entry). Создайте корректирующую транзакцию.')
 
-    def perform_destroy(self, instance):
-        from rest_framework.exceptions import MethodNotAllowed
-        raise MethodNotAllowed('DELETE', detail='Удаление финансовых транзакций запрещено. Создайте корректирующую транзакцию.')
+    @db_transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        user = request.user
+        if not (user.is_superuser or getattr(user, 'role', '') == 'owner'):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Удаление финансовых транзакций доступно только суперадминистраторам и владельцам.')
+            
+        instance = self.get_object()
+        
+        # Откатываем баланс перед удалением транзакции
+        from apps.finance.services import apply_wallet_balance
+        apply_wallet_balance(instance, reverse=True)
+        
+        # Если это оплата по продаже, снимем флаг оплаты
+        if instance.sale_id:
+            sale = instance.sale
+            if sale:
+                sale.is_paid = False
+                sale.save(update_fields=['is_paid'])
+                
+        return super().destroy(request, *args, **kwargs)
 
 
 class DebtViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):

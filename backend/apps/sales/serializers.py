@@ -14,17 +14,32 @@ from .services import (
     _rollback_sale_fifo,
     validate_order_status_transition,
     create_order_status_history,
+    sync_order_prepayment_transaction,
 )
 
+
+
+class _CompositionWriteSerializer(serializers.Serializer):
+    nomenclature = serializers.UUIDField()
+    quantity = serializers.DecimalField(max_digits=10, decimal_places=2)
+    price = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0)
+
+
+class _CompositionWriteSerializer(serializers.Serializer):
+    nomenclature = serializers.UUIDField()
+    quantity = serializers.DecimalField(max_digits=10, decimal_places=2)
+    price = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0)
 
 class SaleItemWriteSerializer(serializers.ModelSerializer):
     """Сериализатор позиции продажи для записи."""
     warehouse = serializers.UUIDField(required=False, allow_null=True)
+    bouquet_components = _CompositionWriteSerializer(many=True, required=False)
+    bouquet_components = _CompositionWriteSerializer(many=True, required=False)
 
     class Meta:
         model = SaleItem
         fields = ['nomenclature', 'batch', 'quantity', 'price',
-                  'cost_price', 'discount_percent', 'total', 'is_custom_bouquet', 'warehouse']
+                  'cost_price', 'discount_percent', 'total', 'is_custom_bouquet', 'warehouse', 'bouquet_components']
 
 
 class SaleItemSerializer(serializers.ModelSerializer):
@@ -50,12 +65,23 @@ class SaleItemSerializer(serializers.ModelSerializer):
 
     def get_bouquet_components(self, obj):
         """Return bouquet composition for display."""
+        if getattr(obj, 'is_custom_bouquet', False):
+            return [
+                {
+                    'nomenclature': str(comp.nomenclature_id),
+                    'name': comp.nomenclature.name,
+                    'quantity': str(comp.quantity),
+                    'price': str(comp.price),
+                }
+                for comp in obj.components.select_related('nomenclature').all()
+            ]
         nom = obj.nomenclature
         if nom.nomenclature_type in ('bouquet', 'composition'):
             try:
                 template = nom.bouquet_template
                 return [
                     {
+                        'nomenclature': str(comp.nomenclature_id),
                         'name': comp.nomenclature.name,
                         'quantity': str(comp.quantity),
                     }
@@ -195,6 +221,7 @@ class SaleSerializer(serializers.ModelSerializer):
 
         for item_data in items_data:
             warehouse_id = item_data.pop('warehouse', None)
+            bouquet_components = item_data.pop('bouquet_components', [])
             if warehouse_id:
                 batch = resolve_batch_by_warehouse(
                     organization=sale.organization,
@@ -203,7 +230,11 @@ class SaleSerializer(serializers.ModelSerializer):
                 )
                 if batch:
                     item_data['batch'] = batch
-            SaleItem.objects.create(sale=sale, **item_data)
+            si = SaleItem.objects.create(sale=sale, **item_data)
+            if bouquet_components:
+                from .models import SaleItemComposition
+                for comp_data in bouquet_components:
+                    SaleItemComposition.objects.create(sale_item=si, **comp_data)
         recalc_sale_totals(sale)
 
         # FIFO-списание со склада при завершённой и оплаченной продаже
@@ -258,6 +289,7 @@ class SaleSerializer(serializers.ModelSerializer):
             instance.items.all().delete()
             for item_data in items_data:
                 warehouse_id = item_data.pop('warehouse', None)
+                bouquet_components = item_data.pop('bouquet_components', [])
                 if warehouse_id:
                     batch = resolve_batch_by_warehouse(
                         organization=instance.organization,
@@ -266,7 +298,11 @@ class SaleSerializer(serializers.ModelSerializer):
                     )
                     if batch:
                         item_data['batch'] = batch
-                SaleItem.objects.create(sale=instance, **item_data)
+                si = SaleItem.objects.create(sale=instance, **item_data)
+                if bouquet_components:
+                    from .models import SaleItemComposition
+                    for comp_data in bouquet_components:
+                        SaleItemComposition.objects.create(sale_item=si, **comp_data)
             recalc_sale_totals(instance)
             # P3-CRITICAL: Проверяем ТЕКУЩИЙ статус, а не старый — если статус сменился на open,
             # FIFO-списание не должно происходить
@@ -340,6 +376,8 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 
 class OrderItemWriteSerializer(serializers.ModelSerializer):
+    bouquet_components = _CompositionWriteSerializer(many=True, required=False)
+    bouquet_components = _CompositionWriteSerializer(many=True, required=False)
     """Сериализатор позиции заказа для записи (P3-CRITICAL)."""
     class Meta:
         model = OrderItem
@@ -390,11 +428,16 @@ class OrderSerializer(serializers.ModelSerializer):
         """Создаёт позиции заказа и пересчитывает итоги."""
         from decimal import Decimal
         for item_data in items_data:
+            bouquet_components = item_data.pop('bouquet_components', [])
             qty = Decimal(str(item_data['quantity']))
             price = Decimal(str(item_data['price']))
             disc = Decimal(str(item_data.get('discount_percent', 0)))
             total = qty * price * (Decimal('1') - disc / Decimal('100'))
-            OrderItem.objects.create(order=order, total=total, **item_data)
+            oi = OrderItem.objects.create(order=order, total=total, **item_data)
+            if bouquet_components:
+                from .models import OrderItemComposition
+                for comp_data in bouquet_components:
+                    OrderItemComposition.objects.create(order_item=oi, **comp_data)
         self._recalc_order_totals(order)
 
     @db_transaction.atomic
@@ -423,6 +466,12 @@ class OrderSerializer(serializers.ModelSerializer):
             changed_by=self.context.get('request').user if self.context.get('request') else None,
             comment='Создание заказа',
         )
+        
+        try:
+            sync_order_prepayment_transaction(order)
+        except Exception as e:
+            raise serializers.ValidationError(str(e))
+            
         return order
 
     @db_transaction.atomic
@@ -451,6 +500,12 @@ class OrderSerializer(serializers.ModelSerializer):
                 changed_by=self.context.get('request').user if self.context.get('request') else None,
                 comment='Изменение статуса через API',
             )
+            
+        try:
+            sync_order_prepayment_transaction(order)
+        except Exception as e:
+            raise serializers.ValidationError(str(e))
+            
         return order
 
 

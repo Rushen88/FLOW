@@ -394,7 +394,13 @@ export default function FinancePage() {
               }},
               { key: 'description', label: 'Описание', render: (v: string) => v || '—' },
               { key: '_actions', label: '', width: 60, render: (_: any, row: Transaction) => (
-                <IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); setDelTxn(row) }}><Delete fontSize="small" /></IconButton>
+                <>
+                  {(user?.is_superuser || user?.role === 'owner') && (
+                    <IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); setDelTxn(row) }}>
+                      <Delete fontSize="small" />
+                    </IconButton>
+                  )}
+                </>
               )},
             ]}
             rows={transactions}

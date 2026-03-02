@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Typography, Chip, TextField, MenuItem, Button,
-  IconButton, Divider, Switch, FormControlLabel,
+  IconButton, Divider, Switch, FormControlLabel, ToggleButtonGroup, ToggleButton, Card, CardContent,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
 import {
   Add, Delete, AddCircleOutline, ShoppingBag,
-  LocalShipping, CheckCircle, Cancel,
+  LocalShipping, CheckCircle, Cancel, ViewList, ViewKanban, AccessTime, Person,
 } from '@mui/icons-material'
 import api from '../api'
 import { useAuth } from '../contexts/AuthContext'
@@ -23,7 +23,7 @@ interface Order {
   created_at: string; organization: string; trading_point: string
   customer: string | null; recipient_name: string; recipient_phone: string
   delivery_address: string; delivery_time_from: string | null
-  delivery_time_to: string | null; is_anonymous: boolean; card_text: string
+  delivery_time_to: string | null; is_anonymous: boolean; ask_recipient_address: boolean; card_text: string
   subtotal: string; delivery_cost: string; discount_amount: string
   prepayment: string; remaining_payment: string; payment_method: string | null
   responsible: string | null; florist: string | null; courier: string | null
@@ -113,6 +113,7 @@ export default function OrdersPage() {
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [filterSource, setFilterSource] = useState('')
+  const [viewMode, setViewMode] = useState<'list' | 'kanban'>('kanban')
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
 
@@ -141,7 +142,7 @@ export default function OrdersPage() {
     trading_point: '', source: 'shop', customer: '',
     recipient_name: '', recipient_phone: '', delivery_address: '',
     delivery_date: '', delivery_time_from: '', delivery_time_to: '',
-    is_anonymous: false, card_text: '',
+    is_anonymous: false, ask_recipient_address: false, card_text: '',
     payment_method: '', prepayment: '0', delivery_cost: '0',
     notes: '', internal_notes: '',
     responsible: '', florist: '', courier: '',
@@ -154,7 +155,7 @@ export default function OrdersPage() {
       trading_point: '', source: 'shop', customer: '',
       recipient_name: '', recipient_phone: '', delivery_address: '',
       delivery_date: '', delivery_time_from: '', delivery_time_to: '',
-      is_anonymous: false, card_text: '',
+      is_anonymous: false, ask_recipient_address: false, card_text: '',
       payment_method: '', prepayment: '0', delivery_cost: '0',
       notes: '', internal_notes: '',
       responsible: '', florist: '', courier: '',
@@ -206,6 +207,7 @@ export default function OrdersPage() {
         delivery_time_from: orderForm.delivery_time_from || null,
         delivery_time_to: orderForm.delivery_time_to || null,
         is_anonymous: orderForm.is_anonymous,
+        ask_recipient_address: orderForm.ask_recipient_address,
         card_text: orderForm.is_anonymous ? '' : orderForm.card_text,
         payment_method: orderForm.payment_method || null,
         prepayment: orderForm.prepayment || '0',
@@ -335,6 +337,39 @@ export default function OrdersPage() {
   ]
 
   // ─── Render ───
+
+  // ─── Kanban Drag & Drop ───
+  const handleDragStart = (e: React.DragEvent, orderId: string) => {
+    e.dataTransfer.setData('text/plain', orderId);
+  }
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  }
+  const handleDrop = async (e: React.DragEvent, newStatus: string) => {
+    e.preventDefault();
+    const orderId = e.dataTransfer.getData('text');
+    if (!orderId) return;
+    
+    // Optimistic update
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    
+    try {
+      await api.patch(`/sales/orders/${orderId}/`, { status: newStatus });
+      notify('Статус обновлён');
+    } catch (err) {
+      notify(extractError(err, 'Ошибка смены статуса'), 'error');
+      fetchOrders(); // rollback
+    }
+  }
+
+  const kanbanColumns = [
+    { value: 'new', label: 'Новые', color: '#e3f2fd', br: '#90caf9' },
+    { value: 'confirmed', label: 'Подтверждён', color: '#e8eaf6', br: '#90caf9' },
+    { value: 'in_assembly', label: 'В сборке', color: '#fff3e0', br: '#ffb74d' },
+    { value: 'assembled', label: 'Собран', color: '#f3e5f5', br: '#ce93d8' },
+    { value: 'on_delivery', label: 'В доставке', color: '#e1f5fe', br: '#81d4fa' },
+  ]
+
   return (
     <Box>
       <Box sx={{ display: "flex", justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -365,19 +400,73 @@ export default function OrdersPage() {
       </Box>
 
       {/* Orders table */}
-      <DataTable
-        columns={columns}
-        rows={orders}
-        loading={loading}
-        search={search}
-        onSearchChange={v => { setSearch(v); setPage(1) }}
-        searchPlaceholder="Поиск по номеру, получателю, телефону..."
-        page={page}
-        totalPages={totalPages}
-        onPageChange={setPage}
-        emptyText="Заказов пока нет"
-        onRowClick={openDetail}
-      />
+      
+        {viewMode === 'list' ? (
+          <DataTable
+            columns={columns}
+            rows={orders}
+            loading={loading}
+            search={search}
+            onSearchChange={v => { setSearch(v); setPage(1) }}
+            searchPlaceholder="Поиск по номеру..."
+            page={page}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            emptyText="Заказов пока нет"
+          />
+        ) : (
+          <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', pb: 2, minHeight: '60vh' }}>
+            {kanbanColumns.map(col => (
+              <Box 
+                key={col.value} 
+                onDragOver={handleDragOver} 
+                onDrop={e => handleDrop(e, col.value)}
+                sx={{ 
+                  flex: '0 0 300px', 
+                  bgcolor: col.color, 
+                  borderRadius: 2, 
+                  p: 1.5,
+                  borderTop: `4px solid ${col.br}`,
+                  display: 'flex', flexDirection: 'column', gap: 1
+                }}
+              >
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 700, px: 1 }}>
+                  {col.label} ({orders.filter(o => o.status === col.value).length})
+                </Typography>
+                
+                {orders.filter(o => o.status === col.value).map(order => (
+                  <Card 
+                    key={order.id} 
+                    draggable 
+                    onDragStart={e => handleDragStart(e, order.id)}
+                    sx={{ cursor: 'grab', '&:active': { cursor: 'grabbing' }, transition: 'all 0.2s', '&:hover': { transform: 'translateY(-2px)', boxShadow: 3 } }}
+                    onClick={() => openDetail(order)}
+                  >
+                    <CardContent sx={{ p: 1.5, pb: '12px !important' }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="body2" fontWeight={700}>#{order.number}</Typography>
+                        <Typography variant="caption" fontWeight={700}>{fmtCurrency(order.total)}</Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5, color: 'text.secondary' }}>
+                        <Person sx={{ fontSize: 14 }} />
+                        <Typography variant="caption" noWrap>{order.customer_name || 'Неизвестный'}</Typography>
+                      </Box>
+                      {order.delivery_date && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'error.main' }}>
+                          <AccessTime sx={{ fontSize: 14 }} />
+                          <Typography variant="caption" fontWeight={600}>
+                            {fmtDate(order.delivery_date)} {order.delivery_time_from ? `${order.delivery_time_from.slice(0,5)}-${order.delivery_time_to?.slice(0,5)}` : ''}
+                          </Typography>
+                        </Box>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </Box>
+            ))}
+          </Box>
+        )}
+
 
       {/* ═══ Create Order Dialog ═══ */}
       <EntityFormDialog

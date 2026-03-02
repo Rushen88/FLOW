@@ -149,17 +149,19 @@ def do_sale_fifo_write_off(sale):
 
     warnings = []
 
+    warnings = []
+
     for item in sale.items.select_related('nomenclature', 'batch').all():
         nom = item.nomenclature
         if nom.nomenclature_type == 'service':
             continue
 
+        # Определение склада для списания
         warehouse = None
         if item.batch and item.batch.warehouse_id:
             warehouse = item.batch.warehouse
         if not warehouse:
             from apps.core.models import Warehouse
-
             warehouse = Warehouse.objects.filter(
                 organization=sale.organization,
                 is_default_for_sales=True,
@@ -173,69 +175,163 @@ def do_sale_fifo_write_off(sale):
         if not warehouse:
             warehouse = Warehouse.objects.filter(organization=sale.organization).order_by('id').first()
         if not warehouse:
-            raise ValueError(f'Не найден склад для списания товара "{nom.name}". Убедитесь, что для торговой точки назначен склад по умолчанию.')
+            raise ValueError(f'Не найден склад для списания. Убедитесь, что для торговой точки назначен склад.')
 
-        available_qty = (
-            Batch.objects.filter(
-                organization=sale.organization,
-                warehouse=warehouse,
-                nomenclature=nom,
-                remaining__gt=0,
-            ).aggregate(total=db_models.Sum('remaining'))['total']
-            or Decimal('0')
-        )
+        # Собираем список того, что нужно списать
+        # Формат: [(nomenclature, total_qty_to_write_off), ...]
+        items_to_write_off = []
 
-        required_qty = Decimal(str(item.quantity))
-        qty_from_fifo = min(required_qty, available_qty)
-        qty_shortage = required_qty - qty_from_fifo
+        if getattr(item, 'is_custom_bouquet', False):
+            # Если это авторский букет, списываем каждый его компонент
+            for comp in item.components.all():
+                # Количество в составе умножаем на количество букетов
+                comp_qty = Decimal(str(comp.quantity)) * Decimal(str(item.quantity))
+                items_to_write_off.append((comp.nomenclature, comp_qty))
+        elif nom.nomenclature_type in ('bouquet', 'composition'):
+            # Если это шаблонный букет/композиция, списываем компоненты шаблона
+            try:
+                template = nom.bouquet_template
+                for comp in template.components.all():
+                    comp_qty = Decimal(str(comp.quantity)) * Decimal(str(item.quantity))
+                    items_to_write_off.append((comp.nomenclature, comp_qty))
+            except Exception:
+                # Если шаблона нет, попробуем списать как обычный товар (хотя это маловероятно)
+                items_to_write_off.append((nom, Decimal(str(item.quantity))))
+        else:
+            # Обычный товар
+            items_to_write_off.append((nom, Decimal(str(item.quantity))))
 
-        fifo_result = []
-        if qty_from_fifo > 0:
-            fifo_result = fifo_write_off(
-                organization=sale.organization,
-                warehouse=warehouse,
-                nomenclature=nom,
-                quantity=qty_from_fifo,
+        total_item_cost = Decimal('0')
+
+        # Списание компонентов
+        from apps.inventory.models import StockMovement, Batch
+        from apps.inventory.services import fifo_write_off, _update_stock_balance
+        
+        for w_nom, required_qty in items_to_write_off:
+            available_qty = (
+                Batch.objects.filter(
+                    organization=sale.organization,
+                    warehouse=warehouse,
+                    nomenclature=w_nom,
+                    remaining__gt=0,
+                ).aggregate(total=db_models.Sum('remaining'))['total']
+                or Decimal('0')
             )
 
-        for row in fifo_result:
-            StockMovement.objects.create(
-                organization=sale.organization,
-                nomenclature=nom,
-                movement_type=StockMovement.MovementType.SALE,
-                warehouse_from=warehouse,
-                batch=row['batch'],
-                quantity=row['qty'],
-                price=row['price'],
-                sale=sale,
-                notes=f'Продажа #{sale.number}',
-            )
+            qty_from_fifo = min(required_qty, available_qty)
+            qty_shortage = required_qty - qty_from_fifo
 
-        if qty_shortage > 0:
-            StockMovement.objects.create(
-                organization=sale.organization,
-                nomenclature=nom,
-                movement_type=StockMovement.MovementType.SALE,
-                warehouse_from=warehouse,
-                batch=None,
-                quantity=qty_shortage,
-                price=nom.purchase_price,
-                sale=sale,
-                notes=f'Продажа в минус #{sale.number}',
-            )
-            warnings.append(
-                f'Продажа в минус: "{nom.name}" на складе "{warehouse.name}". '
-                f'Продано {required_qty}, доступно {available_qty}, дефицит {qty_shortage}.'
-            )
+            fifo_result = []
+            if qty_from_fifo > 0:
+                fifo_result = fifo_write_off(
+                    organization=sale.organization,
+                    warehouse=warehouse,
+                    nomenclature=w_nom,
+                    quantity=qty_from_fifo,
+                )
 
-        total_cost = sum(r['qty'] * r['price'] for r in fifo_result) + (qty_shortage * nom.purchase_price)
-        item.cost_price = total_cost / required_qty if required_qty else Decimal('0')
+            for row in fifo_result:
+                StockMovement.objects.create(
+                    organization=sale.organization,
+                    nomenclature=w_nom,
+                    movement_type=StockMovement.MovementType.SALE,
+                    warehouse_from=warehouse,
+                    batch=row['batch'],
+                    quantity=row['qty'],
+                    price=row['price'],
+                    sale=sale,
+                    notes=f'Продажа #{sale.number} ({nom.name})',
+                )
+
+            if qty_shortage > 0:
+                StockMovement.objects.create(
+                    organization=sale.organization,
+                    nomenclature=w_nom,
+                    movement_type=StockMovement.MovementType.SALE,
+                    warehouse_from=warehouse,
+                    batch=None,
+                    quantity=qty_shortage,
+                    price=w_nom.purchase_price,
+                    sale=sale,
+                    notes=f'Продажа в минус #{sale.number} ({nom.name})',
+                )
+                warnings.append(
+                    f'Продажа в минус: "{w_nom.name}" на складе "{warehouse.name}". '
+                    f'Требуется {required_qty}, доступно {available_qty}, дефицит {qty_shortage}.'
+                )
+
+            # Суммируем себестоимость
+            comp_cost = sum(r['qty'] * r['price'] for r in fifo_result) + (qty_shortage * w_nom.purchase_price)
+            total_item_cost += comp_cost
+
+            _update_stock_balance(sale.organization, warehouse, w_nom, -required_qty)
+
+        item.cost_price = total_item_cost / Decimal(str(item.quantity)) if Decimal(str(item.quantity)) > 0 else Decimal('0')
         item.save(update_fields=['cost_price'])
-
-        _update_stock_balance(sale.organization, warehouse, nom, -required_qty)
 
     return warnings
 
+
+
+
+def sync_order_prepayment_transaction(order):
+    """
+    Синхронизация финансовой транзакции с предоплатой заказа.
+    Гарантирует, что предоплата корректно отражена в кассе.
+    """
+    from apps.finance.models import Transaction, Wallet
+    from decimal import Decimal
+
+    prepayment = order.prepayment or Decimal('0')
+    wallet = order.payment_method.wallet if order.payment_method else None
+
+    existing_tx = Transaction.objects.filter(order=order).select_for_update().first()
+
+    should_have_tx = prepayment > 0 and wallet and order.status not in ('cancelled', 'completed')
+
+    if should_have_tx:
+        if existing_tx:
+            if existing_tx.wallet_to_id != wallet.id or existing_tx.amount != prepayment:
+                if existing_tx.wallet_to_id:
+                    old_w = Wallet.objects.select_for_update().get(pk=existing_tx.wallet_to_id)
+                    new_bal = old_w.balance - existing_tx.amount
+                    if new_bal < 0 and not old_w.allow_negative:
+                        from rest_framework.exceptions import ValidationError
+                        raise ValidationError(f'Недостаточно средств в кошельке «{old_w.name}» для изменения предоплаты.')
+                    old_w.balance = new_bal
+                    old_w.save(update_fields=['balance'])
+                
+                existing_tx.wallet_to = wallet
+                existing_tx.amount = prepayment
+                existing_tx.save(update_fields=['wallet_to', 'amount'])
+
+                new_w = Wallet.objects.select_for_update().get(pk=wallet.id)
+                new_w.balance += prepayment
+                new_w.save(update_fields=['balance'])
+        else:
+            Transaction.objects.create(
+                organization=order.organization,
+                transaction_type=Transaction.TransactionType.INCOME,
+                wallet_to=wallet,
+                amount=prepayment,
+                order=order,
+                description=f'Предоплата по заказу #{order.number}'
+            )
+            new_w = Wallet.objects.select_for_update().get(pk=wallet.id)
+            new_w.balance += prepayment
+            new_w.save(update_fields=['balance'])
+    else:
+        # Если предоплату обнулили, или заказ отменен, или без кошелька - удаляем/возвращаем транзакцию предоплаты?
+        if existing_tx:
+            if existing_tx.wallet_to_id:
+                old_w = Wallet.objects.select_for_update().get(pk=existing_tx.wallet_to_id)
+                new_bal = old_w.balance - existing_tx.amount
+                if new_bal < 0 and not old_w.allow_negative:
+                    from rest_framework.exceptions import ValidationError
+                    raise ValidationError(f'Недостаточно средств в кассе для возврата предоплаты.')
+                old_w.balance = new_bal
+                old_w.save(update_fields=['balance'])
+            existing_tx.delete()
 
 def sync_sale_transaction(sale):
     """
@@ -247,11 +343,20 @@ def sync_sale_transaction(sale):
     should_have_tx = sale.status == Sale.Status.COMPLETED and sale.is_paid
     wallet = sale.payment_method.wallet if sale.payment_method else None
 
+    # Учитываем предоплату, если продажа создана из заказа
+    from decimal import Decimal
+    sale_amount = sale.total
+    if sale.order and sale.order.prepayment:
+        sale_amount = max(sale.total - sale.order.prepayment, Decimal('0'))
+
+    if sale_amount <= 0:
+        should_have_tx = False
+
     existing_tx = Transaction.objects.filter(sale=sale).select_for_update().first()
 
     if should_have_tx and wallet:
         if existing_tx:
-            if existing_tx.wallet_to_id != wallet.id or existing_tx.amount != sale.total:
+            if existing_tx.wallet_to_id != wallet.id or existing_tx.amount != sale_amount:
                 if existing_tx.wallet_to_id:
                     old_w = Wallet.objects.select_for_update().get(pk=existing_tx.wallet_to_id)
                     new_bal = old_w.balance - existing_tx.amount
@@ -262,23 +367,23 @@ def sync_sale_transaction(sale):
                     old_w.save(update_fields=['balance'])
 
                 existing_tx.wallet_to = wallet
-                existing_tx.amount = sale.total
+                existing_tx.amount = sale_amount
                 existing_tx.save(update_fields=['wallet_to', 'amount'])
 
                 new_w = Wallet.objects.select_for_update().get(pk=wallet.id)
-                new_w.balance += sale.total
+                new_w.balance += sale_amount
                 new_w.save(update_fields=['balance'])
         else:
             Transaction.objects.create(
                 organization=sale.organization,
                 transaction_type=Transaction.TransactionType.INCOME,
                 wallet_to=wallet,
-                amount=sale.total,
+                amount=sale_amount,
                 sale=sale,
-                description=f'Оплата по продаже #{sale.number}'
+                description=f'Оплата по чеку #{sale.number} (остаток)' if sale.order else f'Оплата по продаже #{sale.number}'
             )
             new_w = Wallet.objects.select_for_update().get(pk=wallet.id)
-            new_w.balance += sale.total
+            new_w.balance += sale_amount
             new_w.save(update_fields=['balance'])
     else:
         if existing_tx:
