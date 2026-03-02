@@ -1308,3 +1308,6 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS earned_bonuses NUMERIC(12,2) DEFAULT
 *   **Race condition protection (FIFO)**: Implemented strict select_for_update(skip_locked=False) during stock interactions (pps/inventory/services.py). Double reservation and negative numbers are mathematically impossible at DB layer.
 *   **Caching**: DRF iewsets cache reference data using 
 edis:7-alpine. It skips DB reads entirely for heavy dictionaries.
+
+*   **Celery Data Mining Jobs**: Implemented pps.analytics.tasks.calculate_daily_summary_for_all_points tracking aggregated metrics via celery-beat daemon.
+*   **Global Exception Handling**: Overrode DRF exception handling with nterprise_exception_handler. Avoids raw tracebacks, sending strictly structured { "success": False, "errors": ... } payloads to frontend, logging traceback locally.
