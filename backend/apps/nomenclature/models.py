@@ -95,8 +95,6 @@ class Nomenclature(SoftDeletableModel):
     color = models.CharField('Цвет', max_length=50, blank=True, default='')
     stem_length = models.PositiveIntegerField('Ростовка/Длина (см)', null=True, blank=True)
     diameter = models.PositiveIntegerField('Диаметр (см)', null=True, blank=True)
-    stem_length = models.PositiveIntegerField('Ростовка/Длина (см)', null=True, blank=True)
-    diameter = models.PositiveIntegerField('Диаметр (см)', null=True, blank=True)
     country = models.CharField('Страна', max_length=100, blank=True, default='')
     default_shelf_life_days = models.PositiveIntegerField('Срок годности по умолчанию (дней)', null=True, blank=True)
     min_stock = models.DecimalField(
