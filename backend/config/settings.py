@@ -116,7 +116,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # --------------- REST FRAMEWORK ---------------
 REST_FRAMEWORK = {
-        'EXCEPTION_HANDLER': 'apps.core.exceptions.enterprise_exception_handler',
+        
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
@@ -191,3 +191,43 @@ CACHES = {
 
 CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'WARNING',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'apps': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
+        }
+    },
+}
+
+# --------------- CELERY BEAT ---------------
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    'check_expiring_batches_daily': {
+        'task': 'apps.inventory.tasks.check_expiring_batches',
+        'schedule': crontab(hour=8, minute=0),  # Каждое утро в 8:00
+    },
+    'analytics_daily_summary_midnight': {
+        'task': 'apps.analytics.tasks.calculate_daily_summary_for_all_points',
+        'schedule': crontab(hour=0, minute=5),
+    }
+}

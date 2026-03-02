@@ -1,6 +1,8 @@
 from decimal import Decimal
 from django.db import transaction as db_transaction
 from django.db.models import Q
+from django.utils import timezone
+import datetime
 
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
@@ -17,14 +19,6 @@ from .services import (
     write_off_stock, transfer_stock, InsufficientStockError, build_stock_summary, correct_bouquet_stock,
 )
 from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter
-
-
-def _validate_org_fk(obj, org, label='Объект'):
-    """Проверка что FK принадлежит организации текущего пользователя."""
-    if obj and hasattr(obj, 'organization_id') and str(obj.organization_id) != str(org.id):
-        from rest_framework.exceptions import PermissionDenied
-        raise PermissionDenied(f'{label} не принадлежит вашей организации.')
-
 
 class BatchViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'head', 'options']

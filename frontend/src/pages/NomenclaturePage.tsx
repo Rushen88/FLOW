@@ -16,7 +16,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 interface NomItem {
   id: string; organization: string; group: string | null; name: string; nomenclature_type: string
   sku: string; barcode: string; unit: string | null; purchase_price: string; retail_price: string
-  min_price: string; markup_percent: string; image: string | null; color: string; country: string
+  min_price: string; markup_percent: string; image: string | null; color: string; country: string; stem_length: number | null; diameter: number | null;; stem_length: number | null; diameter: number | null;
   shelf_life_days: number | null
   min_stock: number | null; is_active: boolean; notes: string; group_name: string; unit_name: string
 }
@@ -51,7 +51,7 @@ const nomTypeLabel = (v: string) => NOM_TYPES.find(t => t.value === v)?.label ||
 const defaultItemForm = () => ({
   name: '', nomenclature_type: 'single_flower', group: '' as string, sku: '', barcode: '',
   unit: '' as string, purchase_price: '', retail_price: '', min_price: '', markup_percent: '',
-  color: '', country: '',
+  color: '', country: '', stem_length: '' as string | number, diameter: '' as string | number, stem_length: '' as string | number, diameter: '' as string | number,
   shelf_life_days: '' as string | number, min_stock: '' as string | number, is_active: true, notes: '',
 })
 
@@ -164,7 +164,7 @@ export default function NomenclaturePage() {
         group: item.group || '', sku: item.sku || '', barcode: item.barcode || '',
         unit: item.unit || '', purchase_price: item.purchase_price || '',
         retail_price: item.retail_price || '', min_price: item.min_price || '',
-        markup_percent: item.markup_percent || '', color: item.color || '',
+        markup_percent: item.markup_percent || '', color: item.color || '', stem_length: item.stem_length ?? '', diameter: item.diameter ?? '', stem_length: item.stem_length ?? '', diameter: item.diameter ?? '',
         country: item.country || '',
         shelf_life_days: item.shelf_life_days ?? '',
         min_stock: item.min_stock ?? '', is_active: item.is_active, notes: item.notes || '',

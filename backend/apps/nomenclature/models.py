@@ -93,6 +93,10 @@ class Nomenclature(SoftDeletableModel):
     )
     image = models.ImageField('Фото', upload_to='nomenclature/', blank=True, null=True)
     color = models.CharField('Цвет', max_length=50, blank=True, default='')
+    stem_length = models.PositiveIntegerField('Ростовка/Длина (см)', null=True, blank=True)
+    diameter = models.PositiveIntegerField('Диаметр (см)', null=True, blank=True)
+    stem_length = models.PositiveIntegerField('Ростовка/Длина (см)', null=True, blank=True)
+    diameter = models.PositiveIntegerField('Диаметр (см)', null=True, blank=True)
     country = models.CharField('Страна', max_length=100, blank=True, default='')
     default_shelf_life_days = models.PositiveIntegerField('Срок годности по умолчанию (дней)', null=True, blank=True)
     min_stock = models.DecimalField(
@@ -107,6 +111,14 @@ class Nomenclature(SoftDeletableModel):
         db_table = 'nomenclatures'
         verbose_name = 'Номенклатура'
         verbose_name_plural = 'Номенклатура'
+        indexes = [
+            models.Index(fields=['organization', 'nomenclature_type']),
+            models.Index(fields=['organization', 'is_active', 'is_deleted']),
+        ]
+        indexes = [
+            models.Index(fields=['organization', 'nomenclature_type']),
+            models.Index(fields=['organization', 'is_active', 'is_deleted']),
+        ]
 
     def __str__(self):
         return self.name
