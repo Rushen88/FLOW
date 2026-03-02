@@ -470,9 +470,14 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             for item in data.get('return_items', []):
                 nom = Nomenclature.objects.get(pk=item['nomenclature'])
                 _validate_org_fk(nom, org, 'Компонент возврата')
+                ret_wh = warehouse
+                if item.get('warehouse'):
+                    ret_wh = Warehouse.objects.get(pk=item['warehouse'])
+                    _validate_org_fk(ret_wh, org, 'Склад возврата')
                 return_items.append({
                     'nomenclature': nom,
                     'quantity': Decimal(str(item['quantity'])),
+                    'warehouse': ret_wh,
                 })
 
             writeoff_items = []

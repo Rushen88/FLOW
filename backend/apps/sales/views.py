@@ -16,9 +16,6 @@ from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, _resolve_org
 
 
 class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
-    def perform_destroy(self, instance):
-        from rest_framework.exceptions import MethodNotAllowed
-        raise MethodNotAllowed('DELETE', detail='Удаление продаж запрещено архитектурой. Переведите продажу в статус Отменена для корректного отката балансов и остатков.')
     serializer_class = SaleSerializer
     queryset = Sale.objects.all()
     permission_classes = [ReadOnlyOrManager]
@@ -59,6 +56,10 @@ class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 
     @db_transaction.atomic
     def destroy(self, request, *args, **kwargs):
+        user = request.user
+        if not (user.is_superuser or getattr(user, 'role', '') == 'owner'):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Удаление продаж доступно только суперадминистраторам и владельцам.')
         instance = self.get_object()
         rollback_sale_effects_before_delete(instance)
         return super().destroy(request, *args, **kwargs)

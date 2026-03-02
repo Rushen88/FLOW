@@ -442,8 +442,9 @@ def disassemble_bouquet(
     """
     Раскомплектовка букета.
 
-    return_items: [{'nomenclature': Nomenclature, 'quantity': Decimal}, ...]
-       — компоненты, возвращаемые на склад
+    return_items: [{'nomenclature': Nomenclature, 'quantity': Decimal,
+                     'warehouse': Warehouse (optional)}, ...]
+       — компоненты, возвращаемые на склад (warehouse per item or default)
     writeoff_items: [{'nomenclature': Nomenclature, 'quantity': Decimal,
                       'reason': str}, ...]
        — компоненты, идущие в списание
@@ -487,11 +488,13 @@ def disassemble_bouquet(
         if comp_qty <= 0:
             continue
 
+        ret_wh = item.get('warehouse') or warehouse
+
         # Создаём новую партию с закупочной ценой компонента
         batch = Batch.objects.create(
             organization=organization,
             nomenclature=comp_nom,
-            warehouse=warehouse,
+            warehouse=ret_wh,
             purchase_price=comp_nom.purchase_price,
             quantity=comp_qty,
             remaining=comp_qty,
@@ -502,14 +505,14 @@ def disassemble_bouquet(
             organization=organization,
             nomenclature=comp_nom,
             movement_type=StockMovement.MovementType.RETURN,
-            warehouse_to=warehouse,
+            warehouse_to=ret_wh,
             batch=batch,
             quantity=comp_qty,
             price=comp_nom.purchase_price,
             user=user,
             notes=f'Возврат из раскомплектовки: {nomenclature_bouquet.name}',
         )
-        _update_stock_balance(organization, warehouse, comp_nom, comp_qty)
+        _update_stock_balance(organization, ret_wh, comp_nom, comp_qty)
 
     # 3. Списание компонентов (через FIFO + обновление StockBalance)
     for item in writeoff_items:

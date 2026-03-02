@@ -1050,6 +1050,7 @@ export default function SalesPage() {
               </Box>
             )}
 
+            {(user?.is_superuser || user?.role === 'owner') && (
             <Box sx={{ display: 'flex', justifyContent: 'flex-start', mt: 2 }}>
               <Button
                 color="error" variant="outlined" startIcon={<Delete />}
@@ -1058,6 +1059,7 @@ export default function SalesPage() {
                 Удалить продажу
               </Button>
             </Box>
+            )}
           </>
         )}
       </EntityFormDialog>
