@@ -51,13 +51,18 @@ def apply_wallet_balance(txn_or_id, reverse=False):
     amount = txn.amount
     if reverse:
         if txn.wallet_from_id:
-            Wallet.objects.select_for_update().filter(pk=txn.wallet_from_id).update(
-                balance=db_models.F('balance') + amount
-            )
+            w_from = Wallet.objects.select_for_update().get(pk=txn.wallet_from_id)
+            w_from.balance += amount
+            w_from.save(update_fields=['balance'])
         if txn.wallet_to_id:
-            Wallet.objects.select_for_update().filter(pk=txn.wallet_to_id).update(
-                balance=db_models.F('balance') - amount
-            )
+            w_to = Wallet.objects.select_for_update().get(pk=txn.wallet_to_id)
+            new_bal = w_to.balance - amount
+            if new_bal < 0 and not w_to.allow_negative:
+                raise ValidationError({
+                    'wallet_to': f'Недостаточно средств в кошельке «{w_to.name}» (списание: {amount}, баланс: {w_to.balance}).'
+                })
+            w_to.balance = new_bal
+            w_to.save(update_fields=['balance'])
     else:
         if txn.wallet_from_id:
             wallet_from = Wallet.objects.select_for_update().get(pk=txn.wallet_from_id)
@@ -67,10 +72,9 @@ def apply_wallet_balance(txn_or_id, reverse=False):
                     'wallet_from': f'Недостаточно средств в кошельке «{wallet_from.name}». '
                                    f'Баланс: {wallet_from.balance}, списание: {amount}.'
                 })
-            Wallet.objects.filter(pk=wallet_from.pk).update(
-                balance=db_models.F('balance') - amount
-            )
+            wallet_from.balance = new_balance
+            wallet_from.save(update_fields=['balance'])
         if txn.wallet_to_id:
-            Wallet.objects.select_for_update().filter(pk=txn.wallet_to_id).update(
-                balance=db_models.F('balance') + amount
-            )
+            w_to = Wallet.objects.select_for_update().get(pk=txn.wallet_to_id)
+            w_to.balance += amount
+            w_to.save(update_fields=['balance'])

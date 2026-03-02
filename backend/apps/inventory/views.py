@@ -276,6 +276,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['post'], url_path='assemble-bouquet')
+    @db_transaction.atomic
     def assemble_bouquet_action(self, request):
         """
         Сборка букета.
@@ -438,6 +439,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['post'], url_path='disassemble-bouquet')
+    @db_transaction.atomic
     def disassemble_bouquet_action(self, request):
         """
         Раскомплектовка букета.

@@ -41,6 +41,12 @@ class Wallet(models.Model):
         db_table = 'wallets'
         verbose_name = 'Кошелёк'
         verbose_name_plural = 'Кошельки'
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(balance__gte=0) | models.Q(allow_negative=True),
+                name='wallet_balance_positive_or_allowed'
+            ),
+        ]
 
     def __str__(self):
         return f'{self.name} ({self.balance} руб.)'

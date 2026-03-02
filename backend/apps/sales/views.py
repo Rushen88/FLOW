@@ -31,6 +31,7 @@ class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         qs = Sale.objects.select_related('customer', 'seller', 'trading_point').prefetch_related('items', 'items__nomenclature')
         return _tenant_filter(qs, self.request.user, tp_field='trading_point')
 
+    @db_transaction.atomic
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -42,6 +43,7 @@ class SaleViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         headers = self.get_success_headers(serializer.data)
         return Response(data, status=status.HTTP_201_CREATED, headers=headers)
 
+    @db_transaction.atomic
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
         instance = self.get_object()

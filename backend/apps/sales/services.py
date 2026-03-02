@@ -253,17 +253,21 @@ def sync_sale_transaction(sale):
         if existing_tx:
             if existing_tx.wallet_to_id != wallet.id or existing_tx.amount != sale.total:
                 if existing_tx.wallet_to_id:
-                    Wallet.objects.select_for_update().filter(
-                        pk=existing_tx.wallet_to_id
-                    ).update(balance=db_models.F('balance') - existing_tx.amount)
+                    old_w = Wallet.objects.select_for_update().get(pk=existing_tx.wallet_to_id)
+                    new_bal = old_w.balance - existing_tx.amount
+                    if new_bal < 0 and not old_w.allow_negative:
+                        from rest_framework.exceptions import ValidationError
+                        raise ValidationError(f'Недостаточно средств в кошельке «{old_w.name}» (отмена чека потребует списания).')
+                    old_w.balance = new_bal
+                    old_w.save(update_fields=['balance'])
 
                 existing_tx.wallet_to = wallet
                 existing_tx.amount = sale.total
                 existing_tx.save(update_fields=['wallet_to', 'amount'])
 
-                Wallet.objects.select_for_update().filter(
-                    pk=wallet.id
-                ).update(balance=db_models.F('balance') + sale.total)
+                new_w = Wallet.objects.select_for_update().get(pk=wallet.id)
+                new_w.balance += sale.total
+                new_w.save(update_fields=['balance'])
         else:
             Transaction.objects.create(
                 organization=sale.organization,
@@ -273,15 +277,19 @@ def sync_sale_transaction(sale):
                 sale=sale,
                 description=f'Оплата по продаже #{sale.number}'
             )
-            Wallet.objects.select_for_update().filter(
-                pk=wallet.id
-            ).update(balance=db_models.F('balance') + sale.total)
+            new_w = Wallet.objects.select_for_update().get(pk=wallet.id)
+            new_w.balance += sale.total
+            new_w.save(update_fields=['balance'])
     else:
         if existing_tx:
             if existing_tx.wallet_to_id:
-                Wallet.objects.select_for_update().filter(
-                    pk=existing_tx.wallet_to_id
-                ).update(balance=db_models.F('balance') - existing_tx.amount)
+                old_w = Wallet.objects.select_for_update().get(pk=existing_tx.wallet_to_id)
+                new_bal = old_w.balance - existing_tx.amount
+                if new_bal < 0 and not old_w.allow_negative:
+                    from rest_framework.exceptions import ValidationError
+                    raise ValidationError(f'Недостаточно средств в кошельке «{old_w.name}» для возврата.')
+                old_w.balance = new_bal
+                old_w.save(update_fields=['balance'])
             existing_tx.delete()
 
 
