@@ -48,6 +48,7 @@ class NomenclatureViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     filterset_fields = ['nomenclature_type', 'group', 'is_active']
     search_fields = ['name', 'sku', 'barcode']
     ordering_fields = ['name', 'retail_price', 'created_at']
+    ordering = ['name']
 
     def get_serializer_class(self):
         if self.action == 'list':

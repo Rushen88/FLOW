@@ -35,7 +35,7 @@ interface StockMovement {
 }
 interface Ref { id: string; name: string }
 interface WarehouseRef extends Ref { trading_point?: string | null; is_default_for_sales?: boolean }
-interface NomRef { id: string; name: string; nomenclature_type: string; purchase_price: string }
+interface NomRef { id: string; name: string; nomenclature_type: string; purchase_price: string; retail_price: string }
 interface BouquetComponent { nomenclature: string; quantity: string; nomenclature_name: string }
 interface BouquetTemplateRef {
   id: string; nomenclature: string; components: BouquetComponent[]
@@ -252,7 +252,7 @@ export default function InventoryPage() {
   // ═══════════════════════════════════════════
   const [asmDlg, setAsmDlg] = useState(false)
   const [asmMode, setAsmMode] = useState<'template' | 'individual'>('template')
-  const [asmForm, setAsmForm] = useState({ nomenclature_bouquet: '', warehouse_to: '', quantity: '1', assembler: '', add_to_templates: false, bouquet_name: '' })
+  const [asmForm, setAsmForm] = useState({ nomenclature_bouquet: '', warehouse_to: '', quantity: '1', assembler: '', add_to_templates: false, bouquet_name: '', selling_price: '' })
   const [asmComponents, setAsmComponents] = useState<(BouquetComponent & { warehouse?: string; is_required?: boolean; base_qty?: string })[]>([])
   const [asmCustom, setAsmCustom] = useState(false)
   const [asmSaving, setAsmSaving] = useState(false)
@@ -269,7 +269,7 @@ export default function InventoryPage() {
   const [dasmSaving, setDasmSaving] = useState(false)
 
   const [corrDlg, setCorrDlg] = useState(false)
-  const [corrForm, setCorrForm] = useState({ nomenclature_bouquet: '', warehouse: '' })
+  const [corrForm, setCorrForm] = useState({ nomenclature_bouquet: '', warehouse: '', selling_price: '' })
   const [corrRows, setCorrRows] = useState<{ nomenclature: string; name: string; base_qty: string; writeoff_qty: string; return_qty: string; add_qty: string; reason: string; return_warehouse: string; add_warehouse: string }[]>([])
   const [corrSaving, setCorrSaving] = useState(false)
   const [writeOffDlg, setWriteOffDlg] = useState(false)
@@ -305,11 +305,11 @@ export default function InventoryPage() {
     const defaultWh = scopedWarehouses.length === 1 ? scopedWarehouses[0].id : ''
     setAsmMode(mode)
     if (mode === 'individual') {
-      setAsmForm({ nomenclature_bouquet: '', warehouse_to: defaultWh, quantity: '1', assembler: user?.id || '', add_to_templates: true, bouquet_name: '' })
+      setAsmForm({ nomenclature_bouquet: '', warehouse_to: defaultWh, quantity: '1', assembler: user?.id || '', add_to_templates: true, bouquet_name: '', selling_price: '' })
       setAsmComponents([{ nomenclature: '', nomenclature_name: '', quantity: '1', base_qty: '1', warehouse: '' }])
       setAsmCustom(true)
     } else {
-      setAsmForm({ nomenclature_bouquet: '', warehouse_to: defaultWh, quantity: '1', assembler: user?.id || '', add_to_templates: false, bouquet_name: '' })
+      setAsmForm({ nomenclature_bouquet: '', warehouse_to: defaultWh, quantity: '1', assembler: user?.id || '', add_to_templates: false, bouquet_name: '', selling_price: '' })
       setAsmComponents([])
       setAsmCustom(false)
     }
@@ -331,7 +331,8 @@ export default function InventoryPage() {
   }
 
   const handleAsmBouquetChange = (nomId: string) => {
-    setAsmForm(f => ({ ...f, nomenclature_bouquet: nomId }))
+    const selectedNom = allNom.find(n => n.id === nomId)
+    setAsmForm(f => ({ ...f, nomenclature_bouquet: nomId, selling_price: selectedNom?.retail_price || '' }))
     const tpl = bouquetTemplates.find(t => t.nomenclature === nomId)
     if (tpl && tpl.components?.length) {
       setAsmCustom(false)
@@ -573,7 +574,7 @@ export default function InventoryPage() {
                             startIcon={<Tune fontSize="small" />}
                             onClick={() => {
                               const tpl = bouquetTemplates.find(t => t.nomenclature === row.nomenclature)
-                              setCorrForm({ nomenclature_bouquet: row.nomenclature, warehouse: row.warehouse })
+                              setCorrForm({ nomenclature_bouquet: row.nomenclature, warehouse: row.warehouse, selling_price: allNom.find(n => n.id === row.nomenclature)?.retail_price || '' })
                               setCorrRows((tpl?.components || [])
                                 .filter(c => allNom.find(n => n.id === c.nomenclature)?.nomenclature_type !== 'service')
                                 .map(c => ({
@@ -796,15 +797,20 @@ export default function InventoryPage() {
             />
           )}
           <Grid container spacing={2}>
-            <Grid size={{ xs: 4 }}>
+            <Grid size={{ xs: 3 }}>
               <TextField label="Склад" required select fullWidth value={asmForm.warehouse_to}
                 onChange={e => setAsmForm({ ...asmForm, warehouse_to: e.target.value })}>
                 {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
               </TextField>
             </Grid>
-            <Grid size={{ xs: 4 }}>
+            <Grid size={{ xs: 2 }}>
               <TextField label="Кол-во" type="number" fullWidth value={asmForm.quantity}
                 onChange={e => setAsmForm({ ...asmForm, quantity: e.target.value })} />
+            </Grid>
+            <Grid size={{ xs: 3 }}>
+              <TextField label="Цена продажи" type="number" fullWidth value={asmForm.selling_price}
+                onChange={e => setAsmForm({ ...asmForm, selling_price: e.target.value })}
+                slotProps={{ input: { endAdornment: <Typography variant="caption" color="text.secondary">₽</Typography> } }} />
             </Grid>
             <Grid size={{ xs: 4 }}>
               <TextField label="Сборщик" select fullWidth value={asmForm.assembler}
@@ -820,85 +826,97 @@ export default function InventoryPage() {
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
                 {asmMode === 'individual' ? '✦ Состав индивидуального букета:' : asmCustom ? 'Компоненты (произвольно):' : 'Компоненты (редактируемые):'}
               </Typography>
+              {/* Column header */}
+              <Grid container spacing={1} sx={{ px: 1, py: 0.5, mb: 0.5, bgcolor: 'background.default', borderRadius: 1.5 }}>
+                <Grid size={{ xs: 4 }}><Typography variant="caption" color="text.secondary">Компонент</Typography></Grid>
+                <Grid size={{ xs: 2 }}><Typography variant="caption" color="text.secondary">Кол-во</Typography></Grid>
+                <Grid size={{ xs: 3 }}><Typography variant="caption" color="text.secondary">Склад списания</Typography></Grid>
+                <Grid size={{ xs: 2 }}><Typography variant="caption" color="text.secondary">Остаток</Typography></Grid>
+                <Grid size={{ xs: 1 }}></Grid>
+              </Grid>
               {asmComponents.map((c, i) => {
                 const nom = allNom.find(n => n.id === c.nomenclature)
                 const isService = nom?.nomenclature_type === 'service'
                 const needQty = parseFloat(c.quantity || '0') * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)
                 const hasShortage = !isService && c.nomenclature && getAvailableQty(c.nomenclature, c.warehouse) < needQty
                 return (
-                <Card key={i} variant="outlined" sx={{ borderRadius: 2, mb: 0.5, borderColor: hasShortage ? 'error.main' : 'divider' }}>
-                  <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                    <Grid container spacing={1} alignItems="center">
-                      <Grid size={{ xs: 4 }}>
-                        <TextField select size="small" fullWidth label="Компонент" value={c.nomenclature}
+                <Box key={i} sx={{ px: 1, py: 0.75, borderRadius: 1, mb: 0.25, bgcolor: hasShortage ? 'error.lighter' : 'transparent', '&:hover': { bgcolor: hasShortage ? 'error.lighter' : 'action.hover' } }}>
+                  <Grid container spacing={1} alignItems="center">
+                    <Grid size={{ xs: 4 }}>
+                      <TextField select size="small" fullWidth label="Компонент" value={c.nomenclature}
+                        onChange={e => {
+                          const nextNom = e.target.value
+                          const need = parseFloat(c.quantity || '0') * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)
+                          const wh = getRecommendedWarehouse(nextNom, need)
+                          const upd = [...asmComponents]
+                          upd[i] = { ...upd[i], nomenclature: nextNom, nomenclature_name: componentNoms.find(n => n.id === nextNom)?.name || '', warehouse: wh }
+                          setAsmComponents(upd)
+                        }}>
+                        {componentNoms.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
+                      </TextField>
+                    </Grid>
+                    <Grid size={{ xs: 2 }}>
+                      <TextField size="small" fullWidth label="Кол-во" type="number" value={c.quantity}
+                        onChange={e => {
+                          const upd = [...asmComponents]
+                          upd[i] = { ...upd[i], quantity: e.target.value }
+                          setAsmComponents(upd)
+                        }} />
+                    </Grid>
+                    <Grid size={{ xs: 3 }}>
+                      {!isService ? (
+                        <TextField select size="small" fullWidth label="Склад списания" value={c.warehouse || ''}
                           onChange={e => {
-                            const nextNom = e.target.value
-                            const need = parseFloat(c.quantity || '0') * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)
-                            const wh = getRecommendedWarehouse(nextNom, need)
                             const upd = [...asmComponents]
-                            upd[i] = { ...upd[i], nomenclature: nextNom, nomenclature_name: componentNoms.find(n => n.id === nextNom)?.name || '', warehouse: wh }
+                            upd[i] = { ...upd[i], warehouse: e.target.value }
                             setAsmComponents(upd)
                           }}>
-                          {componentNoms.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
+                          {getNomWarehouses(c.nomenclature)
+                            .filter(w => w.qty >= needQty)
+                            .map(w => (
+                            <MenuItem key={w.id} value={w.id}>{w.name} ({w.qty})</MenuItem>
+                          ))}
                         </TextField>
-                        {nom && <Typography variant="caption" color="text.secondary">Цена: {fmtNum(nom.purchase_price)} р</Typography>}
-                      </Grid>
-                      <Grid size={{ xs: 2 }}>
-                        <TextField size="small" fullWidth label="Кол-во" type="number" value={c.quantity}
-                          onChange={e => {
-                            const upd = [...asmComponents]
-                            upd[i] = { ...upd[i], quantity: e.target.value }
-                            setAsmComponents(upd)
-                          }} />
-                      </Grid>
-                      {!isService ? (
-                        <>
-                          <Grid size={{ xs: 3 }}>
-                            <TextField select size="small" fullWidth label="Склад списания" value={c.warehouse || ''}
-                              onChange={e => {
-                                const upd = [...asmComponents]
-                                upd[i] = { ...upd[i], warehouse: e.target.value }
-                                setAsmComponents(upd)
-                              }}>
-                              {getNomWarehouses(c.nomenclature)
-                                .filter(w => w.qty >= needQty)
-                                .map(w => (
-                                <MenuItem key={w.id} value={w.id}>{w.name} ({w.qty})</MenuItem>
-                              ))}
-                            </TextField>
-                          </Grid>
-                          <Grid size={{ xs: 2 }}>
-                            <Typography variant="caption" color={hasShortage ? 'error.main' : 'text.secondary'}>
-                              Остаток: {getAvailableQty(c.nomenclature, c.warehouse)}
-                            </Typography>
-                          </Grid>
-                        </>
                       ) : (
-                        <Grid size={{ xs: 5 }}>
-                          <Chip size="small" label="Услуга — склад не требуется" variant="outlined" />
-                        </Grid>
+                        <TextField size="small" fullWidth label="Склад списания" value="не требуется" disabled />
                       )}
-                      <Grid size={{ xs: 1 }}>
-                        <IconButton size="small" color="error" onClick={() => setAsmComponents(prev => prev.filter((_, j) => j !== i))}>
-                          <Delete fontSize="small" />
-                        </IconButton>
-                      </Grid>
                     </Grid>
-                  </CardContent>
-                </Card>
+                    <Grid size={{ xs: 2 }}>
+                      {!isService && (
+                        <Typography variant="caption" color={hasShortage ? 'error.main' : 'text.secondary'}>
+                          {getAvailableQty(c.nomenclature, c.warehouse)}
+                        </Typography>
+                      )}
+                    </Grid>
+                    <Grid size={{ xs: 1 }}>
+                      <IconButton size="small" color="error" onClick={() => setAsmComponents(prev => prev.filter((_, j) => j !== i))}>
+                        <Delete fontSize="small" />
+                      </IconButton>
+                    </Grid>
+                  </Grid>
+                </Box>
               )})}
 
-
-              <Button size="small" startIcon={<Add />} onClick={() => setAsmComponents(prev => [...prev, { nomenclature: '', nomenclature_name: '', quantity: '1', warehouse: '' }])}>
+              <Button size="small" startIcon={<Add />} sx={{ mt: 0.5 }} onClick={() => setAsmComponents(prev => [...prev, { nomenclature: '', nomenclature_name: '', quantity: '1', warehouse: '' }])}>
                 Добавить компонент
               </Button>
 
-              <Typography variant="body2" sx={{ mt: 1, fontWeight: 500 }}>
-                Расчётная себестоимость: {asmComponents.reduce((sum, c) => {
-                  const nom = allNom.find(n => n.id === c.nomenclature)
-                  return sum + (nom ? parseFloat(nom.purchase_price) * parseFloat(c.quantity) : 0)
-                }, 0).toFixed(2)} р / шт.
-              </Typography>
+              <Box sx={{ mt: 1.5, p: 1.5, bgcolor: 'background.default', borderRadius: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Typography variant="body2" fontWeight={500}>
+                  Себестоимость: {asmComponents.reduce((sum, c) => {
+                    const n = allNom.find(x => x.id === c.nomenclature)
+                    return sum + (n ? parseFloat(n.purchase_price) * parseFloat(c.quantity || '0') : 0)
+                  }, 0).toFixed(2)} ₽ / шт.
+                </Typography>
+                {asmForm.selling_price && (
+                  <Typography variant="body2" fontWeight={500} color="success.main">
+                    Маржа: {(parseFloat(asmForm.selling_price) - asmComponents.reduce((sum, c) => {
+                      const n = allNom.find(x => x.id === c.nomenclature)
+                      return sum + (n ? parseFloat(n.purchase_price) * parseFloat(c.quantity || '0') : 0)
+                    }, 0)).toFixed(2)} ₽
+                  </Typography>
+                )}
+              </Box>
 
               {asmMode === 'template' && (
                 <Grid container spacing={2} sx={{ mt: 1 }}>
@@ -943,81 +961,84 @@ export default function InventoryPage() {
           </Box>
         </DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '16px !important' }}>
-          <TextField label="Букет" required select fullWidth value={dasmForm.nomenclature_bouquet}
-            onChange={e => handleDasmBouquetChange(e.target.value)}>
-            {bouquetNoms.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
-          </TextField>
-          <TextField label="Склад" required select fullWidth value={dasmForm.warehouse}
-            onChange={e => setDasmForm({ ...dasmForm, warehouse: e.target.value })}>
-            {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
-          </TextField>
-          <TextField label="Сборщик" select fullWidth value={dasmForm.assembler}
-            onChange={e => setDasmForm({ ...dasmForm, assembler: e.target.value })}>
-            <MenuItem value="">—</MenuItem>
-            {users.map(u => <MenuItem key={u.id} value={u.id}>{u.full_name || u.username}</MenuItem>)}
-          </TextField>
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 5 }}>
+              <TextField label="Букет" required select fullWidth value={dasmForm.nomenclature_bouquet}
+                onChange={e => handleDasmBouquetChange(e.target.value)}>
+                {bouquetNoms.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
+              </TextField>
+            </Grid>
+            <Grid size={{ xs: 4 }}>
+              <TextField label="Склад" required select fullWidth value={dasmForm.warehouse}
+                onChange={e => setDasmForm({ ...dasmForm, warehouse: e.target.value })}>
+                {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
+              </TextField>
+            </Grid>
+            <Grid size={{ xs: 3 }}>
+              <TextField label="Сборщик" select fullWidth value={dasmForm.assembler}
+                onChange={e => setDasmForm({ ...dasmForm, assembler: e.target.value })}>
+                <MenuItem value="">—</MenuItem>
+                {users.map(u => <MenuItem key={u.id} value={u.id}>{u.full_name || u.username}</MenuItem>)}
+              </TextField>
+            </Grid>
+          </Grid>
           {dasmRows.length > 0 && (
             <Box>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-                Распределение компонентов (возврат / списание):
+                Распределение компонентов:
               </Typography>
-              <Chip size="small" color="info" label="Услуги автоматически исключены" sx={{ mb: 1 }} />
-              <Grid container spacing={1} sx={{ px: 1, py: 0.5, bgcolor: 'background.default', borderRadius: 1.5, mb: 0.5 }}>
+              {/* Column header */}
+              <Grid container spacing={1} sx={{ px: 1, py: 0.5, mb: 0.5, bgcolor: 'background.default', borderRadius: 1.5 }}>
                 <Grid size={{ xs: 3 }}><Typography variant="caption" color="text.secondary">Компонент</Typography></Grid>
                 <Grid size={{ xs: 2 }}><Typography variant="caption" color="text.secondary">Возврат</Typography></Grid>
                 <Grid size={{ xs: 2 }}><Typography variant="caption" color="text.secondary">Списание</Typography></Grid>
                 <Grid size={{ xs: 3 }}><Typography variant="caption" color="text.secondary">Склад возврата</Typography></Grid>
                 <Grid size={{ xs: 2 }}><Typography variant="caption" color="text.secondary">Причина</Typography></Grid>
               </Grid>
-              {dasmRows.map((r, i) => {
-                const nom = allNom.find(n => n.id === r.nomenclature)
-                return (
-                <Card key={i} variant="outlined" sx={{ borderRadius: 2, mb: 0.5 }}>
-                  <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                    <Grid container spacing={1} alignItems="center">
-                      <Grid size={{ xs: 3 }}>
-                        <Typography variant="body2" fontWeight={600}>{r.name}</Typography>
-                        {nom && <Typography variant="caption" color="text.secondary">Цена: {fmtNum(nom.purchase_price)} р · База: {r.base_qty}</Typography>}
-                      </Grid>
-                      <Grid size={{ xs: 2 }}>
-                        <TextField label="Возврат" type="number" size="small" fullWidth value={r.return_qty}
-                          disabled />
-                      </Grid>
-                      <Grid size={{ xs: 2 }}>
-                        <TextField label="Списание" type="number" size="small" fullWidth value={r.writeoff_qty}
-                          onChange={e => {
-                            const writeoff = Math.max(0, parseFloat(e.target.value || '0'))
-                            const baseQty = parseFloat(r.base_qty || '0')
-                            const returnQty = Math.max(0, baseQty - writeoff)
-                            const rows = [...dasmRows]
-                            rows[i] = { ...rows[i], writeoff_qty: String(writeoff), return_qty: String(returnQty) }
-                            setDasmRows(rows)
-                          }} />
-                      </Grid>
-                      <Grid size={{ xs: 3 }}>
-                        <TextField label="Склад возврата" select size="small" fullWidth value={r.warehouse || dasmForm.warehouse}
-                          onChange={e => {
-                            const rows = [...dasmRows]
-                            rows[i] = { ...rows[i], warehouse: e.target.value }
-                            setDasmRows(rows)
-                          }}>
-                          {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
-                        </TextField>
-                      </Grid>
-                      <Grid size={{ xs: 2 }}>
-                        {parseFloat(r.writeoff_qty) > 0 && (
-                          <TextField label="Причина" select size="small" fullWidth value={r.reason}
-                            onChange={e => {
-                              const rows = [...dasmRows]; rows[i] = { ...rows[i], reason: e.target.value }; setDasmRows(rows)
-                            }}>
-                            {WRITE_OFF_REASONS.map(wr => <MenuItem key={wr.value} value={wr.value}>{wr.label}</MenuItem>)}
-                          </TextField>
-                        )}
-                      </Grid>
+              {dasmRows.map((r, i) => (
+                <Box key={i} sx={{ px: 1, py: 0.75, borderRadius: 1, mb: 0.25, '&:hover': { bgcolor: 'action.hover' } }}>
+                  <Grid container spacing={1} alignItems="center">
+                    <Grid size={{ xs: 3 }}>
+                      <Typography variant="body2" fontWeight={600}>{r.name}</Typography>
+                      <Typography variant="caption" color="text.secondary">База: {r.base_qty}</Typography>
                     </Grid>
-                  </CardContent>
-                </Card>
-              )})}
+                    <Grid size={{ xs: 2 }}>
+                      <TextField label="Возврат" type="number" size="small" fullWidth value={r.return_qty} disabled />
+                    </Grid>
+                    <Grid size={{ xs: 2 }}>
+                      <TextField label="Списание" type="number" size="small" fullWidth value={r.writeoff_qty}
+                        onChange={e => {
+                          const writeoff = Math.max(0, parseFloat(e.target.value || '0'))
+                          const baseQty = parseFloat(r.base_qty || '0')
+                          const returnQty = Math.max(0, baseQty - writeoff)
+                          const rows = [...dasmRows]
+                          rows[i] = { ...rows[i], writeoff_qty: String(writeoff), return_qty: String(returnQty) }
+                          setDasmRows(rows)
+                        }} />
+                    </Grid>
+                    <Grid size={{ xs: 3 }}>
+                      <TextField label="Склад возврата" select size="small" fullWidth value={r.warehouse || dasmForm.warehouse}
+                        onChange={e => {
+                          const rows = [...dasmRows]
+                          rows[i] = { ...rows[i], warehouse: e.target.value }
+                          setDasmRows(rows)
+                        }}>
+                        {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
+                      </TextField>
+                    </Grid>
+                    <Grid size={{ xs: 2 }}>
+                      {parseFloat(r.writeoff_qty) > 0 && (
+                        <TextField label="Причина" select size="small" fullWidth value={r.reason}
+                          onChange={e => {
+                            const rows = [...dasmRows]; rows[i] = { ...rows[i], reason: e.target.value }; setDasmRows(rows)
+                          }}>
+                          {WRITE_OFF_REASONS.map(wr => <MenuItem key={wr.value} value={wr.value}>{wr.label}</MenuItem>)}
+                        </TextField>
+                      )}
+                    </Grid>
+                  </Grid>
+                </Box>
+              ))}
             </Box>
           )}
         </DialogContent>
@@ -1039,10 +1060,19 @@ export default function InventoryPage() {
           </Box>
         </DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '16px !important' }}>
-          <TextField label="Склад букета" select fullWidth value={corrForm.warehouse}
-            onChange={e => setCorrForm({ ...corrForm, warehouse: e.target.value })}>
-            {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
-          </TextField>
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 6 }}>
+              <TextField label="Склад букета" select fullWidth value={corrForm.warehouse}
+                onChange={e => setCorrForm({ ...corrForm, warehouse: e.target.value })}>
+                {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
+              </TextField>
+            </Grid>
+            <Grid size={{ xs: 6 }}>
+              <TextField label="Цена продажи" type="number" fullWidth value={corrForm.selling_price}
+                onChange={e => setCorrForm({ ...corrForm, selling_price: e.target.value })}
+                slotProps={{ input: { endAdornment: <Typography variant="caption" color="text.secondary">₽</Typography> } }} />
+            </Grid>
+          </Grid>
           {corrRows.length === 0 ? (
             <Box sx={{ py: 4, textAlign: 'center', bgcolor: 'background.default', borderRadius: 2, border: '1px dashed', borderColor: 'divider' }}>
               <Typography variant="body1" fontWeight={600}>Нет физических компонентов для коррекции</Typography>
@@ -1050,12 +1080,12 @@ export default function InventoryPage() {
             </Box>
           ) : (
             <>
+              {/* Column header */}
               <Grid container spacing={1} sx={{ px: 1, py: 0.5, bgcolor: 'background.default', borderRadius: 1.5 }}>
                 <Grid size={{ xs: 3 }}><Typography variant="caption" color="text.secondary">Компонент</Typography></Grid>
-                <Grid size={{ xs: 2 }}><Typography variant="caption" color="text.secondary">Списание</Typography></Grid>
-                <Grid size={{ xs: 2 }}><Typography variant="caption" color="text.secondary">Возврат</Typography></Grid>
-                <Grid size={{ xs: 2 }}><Typography variant="caption" color="text.secondary">Добавление</Typography></Grid>
-                <Grid size={{ xs: 3 }}><Typography variant="caption" color="text.secondary">Причина</Typography></Grid>
+                <Grid size={{ xs: 3 }}><Typography variant="caption" color="text.secondary">Списание / Причина</Typography></Grid>
+                <Grid size={{ xs: 3 }}><Typography variant="caption" color="text.secondary">Возврат / Склад</Typography></Grid>
+                <Grid size={{ xs: 3 }}><Typography variant="caption" color="text.secondary">Добавление / Склад</Typography></Grid>
               </Grid>
 
               {corrRows.map((r, i) => {
@@ -1067,74 +1097,51 @@ export default function InventoryPage() {
                 const isUnbalanced = delta > 0.0001
 
                 return (
-                <Card key={i} variant="outlined" sx={{ borderRadius: 2, borderColor: isUnbalanced ? 'warning.main' : 'divider' }}>
-                  <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                    <Grid container spacing={1} alignItems="center">
-                      <Grid size={{ xs: 3 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                          <Typography variant="body2" fontWeight={600}>{r.name}</Typography>
-                          {isUnbalanced && <Chip size="small" color="warning" variant="outlined" label="Проверьте" />}
-                        </Box>
-                        <Typography variant="caption" color="text.secondary">Цена: {fmtNum(allNom.find(n => n.id === r.nomenclature)?.purchase_price || '0')} р · База: {r.base_qty}</Typography>
-                      </Grid>
-                      <Grid size={{ xs: 2 }}>
+                <Box key={i} sx={{ px: 1, py: 0.75, borderRadius: 1, mb: 0.25, bgcolor: isUnbalanced ? 'warning.lighter' : 'transparent', '&:hover': { bgcolor: isUnbalanced ? 'warning.lighter' : 'action.hover' } }}>
+                  <Grid container spacing={1} alignItems="flex-start">
+                    <Grid size={{ xs: 3 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 1 }}>
+                        <Typography variant="body2" fontWeight={600}>{r.name}</Typography>
+                        {isUnbalanced && <Chip size="small" color="warning" variant="outlined" label="!" sx={{ height: 20, '& .MuiChip-label': { px: 0.5 } }} />}
+                      </Box>
+                      <Typography variant="caption" color="text.secondary">База: {r.base_qty}</Typography>
+                    </Grid>
+                    <Grid size={{ xs: 3 }}>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
                         <TextField label="Списание" size="small" type="number" fullWidth value={r.writeoff_qty}
-                          onChange={e => {
-                            const rows = [...corrRows]
-                            rows[i] = { ...rows[i], writeoff_qty: e.target.value }
-                            setCorrRows(rows)
-                          }} />
-                      </Grid>
-                      <Grid size={{ xs: 2 }}>
-                        <TextField label="Возврат" size="small" type="number" fullWidth value={r.return_qty}
-                          onChange={e => {
-                            const rows = [...corrRows]
-                            rows[i] = { ...rows[i], return_qty: e.target.value }
-                            setCorrRows(rows)
-                          }} />
-                      </Grid>
-                      <Grid size={{ xs: 2 }}>
-                        <TextField label="Добавление" size="small" type="number" fullWidth value={r.add_qty}
-                          onChange={e => {
-                            const rows = [...corrRows]
-                            rows[i] = { ...rows[i], add_qty: e.target.value }
-                            setCorrRows(rows)
-                          }} />
-                      </Grid>
-                      <Grid size={{ xs: 3 }}>
+                          onChange={e => { const rows = [...corrRows]; rows[i] = { ...rows[i], writeoff_qty: e.target.value }; setCorrRows(rows) }} />
                         <TextField label="Причина" size="small" select fullWidth value={r.reason}
-                          onChange={e => {
-                            const rows = [...corrRows]
-                            rows[i] = { ...rows[i], reason: e.target.value }
-                            setCorrRows(rows)
-                          }}>
+                          sx={{ '& .MuiInputBase-root': { borderTopLeftRadius: 0, borderTopRightRadius: 0 } }}
+                          onChange={e => { const rows = [...corrRows]; rows[i] = { ...rows[i], reason: e.target.value }; setCorrRows(rows) }}>
                           {WRITE_OFF_REASONS.map(wr => <MenuItem key={wr.value} value={wr.value}>{wr.label}</MenuItem>)}
                         </TextField>
-                      </Grid>
-                      <Grid size={{ xs: 6 }}>
+                      </Box>
+                    </Grid>
+                    <Grid size={{ xs: 3 }}>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                        <TextField label="Возврат" size="small" type="number" fullWidth value={r.return_qty}
+                          onChange={e => { const rows = [...corrRows]; rows[i] = { ...rows[i], return_qty: e.target.value }; setCorrRows(rows) }} />
                         <TextField label="Склад возврата" size="small" select fullWidth value={r.return_warehouse}
-                          onChange={e => {
-                            const rows = [...corrRows]
-                            rows[i] = { ...rows[i], return_warehouse: e.target.value }
-                            setCorrRows(rows)
-                          }}>
+                          sx={{ '& .MuiInputBase-root': { borderTopLeftRadius: 0, borderTopRightRadius: 0 } }}
+                          onChange={e => { const rows = [...corrRows]; rows[i] = { ...rows[i], return_warehouse: e.target.value }; setCorrRows(rows) }}>
                           {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
                         </TextField>
-                      </Grid>
-                      <Grid size={{ xs: 6 }}>
+                      </Box>
+                    </Grid>
+                    <Grid size={{ xs: 3 }}>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                        <TextField label="Добавление" size="small" type="number" fullWidth value={r.add_qty}
+                          onChange={e => { const rows = [...corrRows]; rows[i] = { ...rows[i], add_qty: e.target.value }; setCorrRows(rows) }} />
                         <TextField label="Склад добавления" size="small" select fullWidth value={r.add_warehouse}
-                          onChange={e => {
-                            const rows = [...corrRows]
-                            rows[i] = { ...rows[i], add_warehouse: e.target.value }
-                            setCorrRows(rows)
-                          }}>
+                          sx={{ '& .MuiInputBase-root': { borderTopLeftRadius: 0, borderTopRightRadius: 0 } }}
+                          onChange={e => { const rows = [...corrRows]; rows[i] = { ...rows[i], add_warehouse: e.target.value }; setCorrRows(rows) }}>
                           <MenuItem value="">— не выбрано —</MenuItem>
                           {getNomWarehouses(r.nomenclature).map(w => <MenuItem key={w.id} value={w.id}>{w.name} ({w.qty})</MenuItem>)}
                         </TextField>
-                      </Grid>
+                      </Box>
                     </Grid>
-                  </CardContent>
-                </Card>
+                  </Grid>
+                </Box>
               )})}
             </>
           )}
