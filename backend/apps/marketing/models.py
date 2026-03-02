@@ -18,6 +18,7 @@ class AdChannel(models.Model):
         db_table = 'ad_channels'
         verbose_name = 'Рекламный канал'
         verbose_name_plural = 'Рекламные каналы'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -96,6 +97,7 @@ class Discount(models.Model):
         db_table = 'discounts'
         verbose_name = 'Скидка'
         verbose_name_plural = 'Скидки'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -123,6 +125,7 @@ class PromoCode(models.Model):
         db_table = 'promo_codes'
         verbose_name = 'Промокод'
         verbose_name_plural = 'Промокоды'
+        ordering = ['code']
         constraints = [
             models.UniqueConstraint(
                 fields=['organization', 'code'],
@@ -163,6 +166,7 @@ class LoyaltyProgram(models.Model):
         db_table = 'loyalty_programs'
         verbose_name = 'Программа лояльности'
         verbose_name_plural = 'Программы лояльности'
+        ordering = ['name']
 
     def __str__(self):
         return self.name

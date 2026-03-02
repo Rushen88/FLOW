@@ -41,6 +41,7 @@ class Wallet(models.Model):
         db_table = 'wallets'
         verbose_name = 'Кошелёк'
         verbose_name_plural = 'Кошельки'
+        ordering = ['name']
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(balance__gte=0) | models.Q(allow_negative=True),
@@ -69,7 +70,7 @@ class TransactionCategory(models.Model):
         'Направление', max_length=10, choices=Direction.choices,
     )
     parent = models.ForeignKey(
-        'self', on_delete=models.CASCADE, null=True, blank=True,
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='children', verbose_name='Родительская категория',
     )
     is_system = models.BooleanField('Системная', default=False)
@@ -78,6 +79,7 @@ class TransactionCategory(models.Model):
         db_table = 'transaction_categories'
         verbose_name = 'Категория транзакций'
         verbose_name_plural = 'Категории транзакций'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -196,6 +198,7 @@ class Debt(models.Model):
         db_table = 'debts'
         verbose_name = 'Долг'
         verbose_name_plural = 'Долги'
+        ordering = ['-created_at']
 
     def __str__(self):
         return f'{self.counterparty_name}: {self.amount} руб.'

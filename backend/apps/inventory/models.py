@@ -82,6 +82,7 @@ class StockBalance(models.Model):
         db_table = 'stock_balances'
         verbose_name = 'Остаток'
         verbose_name_plural = 'Остатки'
+        ordering = ['warehouse', 'nomenclature']
         constraints = [
             models.UniqueConstraint(
                 fields=['organization', 'warehouse', 'nomenclature'],
@@ -201,6 +202,7 @@ class InventoryDocument(models.Model):
         db_table = 'inventory_documents'
         verbose_name = 'Инвентаризация'
         verbose_name_plural = 'Инвентаризации'
+        ordering = ['-created_at']
 
     def __str__(self):
         return f'Инвентаризация №{self.number}'
@@ -267,6 +269,7 @@ class Reserve(models.Model):
         db_table = 'reserves'
         verbose_name = 'Резерв'
         verbose_name_plural = 'Резервы'
+        ordering = ['-created_at']
 
     def __str__(self):
         return f'Резерв: {self.nomenclature.name} x{self.quantity}'

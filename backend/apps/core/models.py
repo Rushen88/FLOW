@@ -68,6 +68,7 @@ class Organization(models.Model):
         db_table = 'organizations'
         verbose_name = 'Организация'
         verbose_name_plural = 'Организации'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -125,6 +126,7 @@ class User(AbstractUser):
         db_table = 'users'
         verbose_name = 'Сотрудник'
         verbose_name_plural = 'Сотрудники'
+        ordering = ['last_name', 'first_name']
 
     def __str__(self):
         return self.full_name or self.username
@@ -157,6 +159,7 @@ class TradingPoint(models.Model):
         db_table = 'trading_points'
         verbose_name = 'Торговая точка'
         verbose_name_plural = 'Торговые точки'
+        ordering = ['name']
         constraints = [
             models.UniqueConstraint(
                 fields=['organization', 'name'],
@@ -205,6 +208,7 @@ class Warehouse(models.Model):
         db_table = 'warehouses'
         verbose_name = 'Склад'
         verbose_name_plural = 'Склады'
+        ordering = ['name']
         constraints = [
             models.UniqueConstraint(
                 fields=['organization', 'trading_point', 'name'],
@@ -238,6 +242,7 @@ class PaymentMethod(models.Model):
         db_table = 'payment_methods'
         verbose_name = 'Способ оплаты'
         verbose_name_plural = 'Способы оплаты'
+        ordering = ['name']
 
     def __str__(self):
         return self.name

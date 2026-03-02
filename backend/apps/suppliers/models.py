@@ -29,6 +29,7 @@ class Supplier(models.Model):
         db_table = 'suppliers'
         verbose_name = 'Поставщик'
         verbose_name_plural = 'Поставщики'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -55,6 +56,7 @@ class SupplierNomenclature(models.Model):
         verbose_name = 'Товар поставщика'
         verbose_name_plural = 'Товары поставщиков'
         unique_together = ['supplier', 'nomenclature']
+        ordering = ['supplier', 'nomenclature']
 
     def __str__(self):
         return f'{self.supplier.name} → {self.nomenclature.name}'
@@ -125,6 +127,7 @@ class SupplierOrderItem(models.Model):
         db_table = 'supplier_order_items'
         verbose_name = 'Позиция заказа поставщику'
         verbose_name_plural = 'Позиции заказов поставщикам'
+        ordering = ['order']
 
 
 class Claim(models.Model):

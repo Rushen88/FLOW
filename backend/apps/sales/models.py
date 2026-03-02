@@ -88,7 +88,7 @@ class SaleItem(models.Model):
         related_name='items', verbose_name='Продажа',
     )
     nomenclature = models.ForeignKey(
-        'nomenclature.Nomenclature', on_delete=models.CASCADE,
+        'nomenclature.Nomenclature', on_delete=models.PROTECT,
         related_name='sale_items', verbose_name='Номенклатура',
     )
     batch = models.ForeignKey(
@@ -280,7 +280,7 @@ class OrderItem(models.Model):
         related_name='items', verbose_name='Заказ',
     )
     nomenclature = models.ForeignKey(
-        'nomenclature.Nomenclature', on_delete=models.CASCADE,
+        'nomenclature.Nomenclature', on_delete=models.PROTECT,
         related_name='order_items', verbose_name='Номенклатура',
     )
     quantity = models.DecimalField('Количество', max_digits=10, decimal_places=2)

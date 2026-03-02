@@ -93,6 +93,15 @@ export default function App() {
           <Route path="settings" element={<Suspense fallback={<PageLoader />}><SettingsPage /></Suspense>} />
           <Route path="admin" element={<Suspense fallback={<PageLoader />}><AdminPage /></Suspense>} />
           <Route path="profile" element={<Suspense fallback={<PageLoader />}><ProfilePage /></Suspense>} />
+          <Route path="*" element={
+            <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
+              <Paper sx={{ p: 4, maxWidth: 400, textAlign: 'center' }}>
+                <Typography variant="h4" gutterBottom>404</Typography>
+                <Typography color="text.secondary" sx={{ mb: 2 }}>Страница не найдена</Typography>
+                <Button variant="contained" href="/">На главную</Button>
+              </Paper>
+            </Box>
+          } />
         </Route>
       </Routes>
     </ErrorBoundary>

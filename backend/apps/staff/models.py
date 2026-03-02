@@ -19,6 +19,7 @@ class Position(models.Model):
         db_table = 'positions'
         verbose_name = 'Должность'
         verbose_name_plural = 'Должности'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -56,6 +57,7 @@ class PayrollScheme(models.Model):
         db_table = 'payroll_schemes'
         verbose_name = 'Схема оплаты'
         verbose_name_plural = 'Схемы оплаты'
+        ordering = ['-started_at']
 
     def __str__(self):
         return f'{self.employee}: {self.get_scheme_type_display()}'

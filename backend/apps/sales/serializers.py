@@ -24,16 +24,9 @@ class _CompositionWriteSerializer(serializers.Serializer):
     quantity = serializers.DecimalField(max_digits=10, decimal_places=2)
     price = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0)
 
-
-class _CompositionWriteSerializer(serializers.Serializer):
-    nomenclature = serializers.UUIDField()
-    quantity = serializers.DecimalField(max_digits=10, decimal_places=2)
-    price = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0)
-
 class SaleItemWriteSerializer(serializers.ModelSerializer):
     """Сериализатор позиции продажи для записи."""
     warehouse = serializers.UUIDField(required=False, allow_null=True)
-    bouquet_components = _CompositionWriteSerializer(many=True, required=False)
     bouquet_components = _CompositionWriteSerializer(many=True, required=False)
 
     class Meta:
@@ -376,9 +369,9 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 
 class OrderItemWriteSerializer(serializers.ModelSerializer):
-    bouquet_components = _CompositionWriteSerializer(many=True, required=False)
-    bouquet_components = _CompositionWriteSerializer(many=True, required=False)
     """Сериализатор позиции заказа для записи (P3-CRITICAL)."""
+    bouquet_components = _CompositionWriteSerializer(many=True, required=False)
+
     class Meta:
         model = OrderItem
         fields = ['nomenclature', 'quantity', 'price', 'discount_percent', 'is_custom_bouquet']

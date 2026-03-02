@@ -97,7 +97,7 @@ class SupplierOrderViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 raise ValidationError({'warehouse': 'Склад не найден.'})
         else:
             warehouse = Warehouse.objects.filter(
-                organization=order.organization, is_default_for_sales=True
+                organization=order.organization, is_default_for_receiving=True
             ).first()
             if not warehouse:
                 warehouse = Warehouse.objects.filter(organization=order.organization).first()

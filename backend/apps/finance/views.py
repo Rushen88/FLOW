@@ -192,6 +192,10 @@ class CashShiftViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         shift.actual_balance_at_close = actual
         shift.expected_balance_at_close = expected
         shift.discrepancy = actual - expected
+        shift.status = CashShift.Status.CLOSED
+        shift.closed_by = request.user
+        shift.closed_at = timezone.now()
+        shift.notes = notes
 
         # Генерация корректирующей транзакции для сохранения финансовой идемпотентности
         if shift.discrepancy != 0:

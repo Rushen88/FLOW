@@ -113,10 +113,6 @@ class Nomenclature(SoftDeletableModel):
             models.Index(fields=['organization', 'nomenclature_type']),
             models.Index(fields=['organization', 'is_active', 'is_deleted']),
         ]
-        indexes = [
-            models.Index(fields=['organization', 'nomenclature_type']),
-            models.Index(fields=['organization', 'is_active', 'is_deleted']),
-        ]
 
     def __str__(self):
         return self.name

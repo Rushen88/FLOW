@@ -2,6 +2,7 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
+  timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -35,10 +36,10 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
     
-    // Auto-retry network errors or server drops for idempotent methods
+    // Auto-retry network errors or server drops for idempotent methods (skip 401)
     if (originalRequest && 
         IDEMPOTENT_METHODS.includes(originalRequest.method?.toLowerCase() || '') &&
-        (!error.response || RETRY_STATUS_CODES.includes(error.response.status))) {
+        (!error.response || (RETRY_STATUS_CODES.includes(error.response.status) && error.response.status !== 401))) {
         
         originalRequest._retryCount = originalRequest._retryCount || 0;
         if (originalRequest._retryCount < MAX_RETRIES) {

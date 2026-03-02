@@ -1,3 +1,42 @@
+# FLOW: Enterprise SaaS для Цветочного Бизнеса
+## Архитектурный Обзор (Ревизия: Enterprise Edition)
+
+### 1. Архитектурный подход
+Система основана на **Domain-Driven Design (DDD)**, где агрегаты четко разделены по доменам (
+omenclature, inventory, sales, customers, staff). 
+Мы используем **Чистую Архитектуру** в рамках Django:
+- **Presentation Layer**: React (Vite, TypeScript, Material UI) 
+- **Application Layer**: Django REST Framework (ViewSets, Action Routing)
+- **Domain/Service Layer**: services.py внутри каждого приложения инкапсулирует бизнес-логику (например: ifo_write_off для списания партий).
+- **Data/Infrastructure Layer**: PostgreSQL, Redis (Celery Backend), Docker Compose.
+
+### 2. Поддержка Multi-Tenancy (SaaS)
+Система работает по модели **Shared Database / Shared Schema**, где изоляция арендаторов достигается посредством:
+- Обязательного внешнего ключа organization во всех основных моделях.
+- Использования OrgPerformCreateMixin и _tenant_filter в базовых ViewSet.
+- **Глобальных индексов БД**: models.Index(fields=['organization', ...]) для предотвращения деградации производительности при росте числа клиентов.
+
+### 3. Специфика Цветочного Бизнеса (Уникальные фичи)
+Система глубоко проработана именно под флористику:
+- **Номенклатура**: Внедрены параметры stem_length (Ростовка/Длина цветка) и diameter (Диаметр горшка) для точного учета сортов.
+- **Инвентаризация и FIFO**: Интеграция концепции Batch (Партий) с xpiry_date. Цветы — скоропортящийся товар, поэтому списание всегда идет со старых поставок.
+- **Фоновые задачи (Celery)**: Настроен Celery Beat для автоматического сканирования партий, у которых скоро истекает срок годности (ежедневно в 08:00 утра к началу смены).
+- **Композитные Букеты**: Модель BouquetTemplate и BouquetComponent для создания рецептуры букета. При продаже "готового букета" (даже кастомного) система автоматически разузловывает его на компоненты (цветы, упаковка, ленты) и проводит FIFO-списание.
+
+### 4. Отказоустойчивость и Целостность (ACID)
+- Использование SoftDeletableModel для базовых словарей (Номенклатура и т.п.) для предотвращения нарушения ссылочной целостности (ON DELETE RESTRICT).
+- Использование select_for_update() и 	ransaction.atomic в сервисах склада (write_off_stock) для предотвращения состояний гонки (Race Conditions) при параллельных продажах одного и того же дефицитного товара.
+
+### 5. Стек и Технологии
+- **Backend**: Python 3.12, Django 5, DRF, Celery, Redis, PostgreSQL 15, Gunicorn.
+- **Frontend**: React 18, TypeScript, Zustand/Context, Material UI 6, Recharts (Дашборды), Vite.
+- **CI/CD**: Базовые python-скрипты развертывания (deploy.py) через Docker socket/SSH.
+
+*Автор: Ведущий Архитектор Enterprise SaaS.*
+
+
+---
+
 # FlowerBoss — Архитектура системы
 
 ## 1. Общее описание
@@ -623,6 +662,82 @@ npm run dev                       # → http://localhost:3000
 - 🔲 Мобильное приложение (React Native / PWA)
 - 🔲 Redis для кеширования и Celery для фоновых задач
 - 🔲 Автоматические отчёты и email-рассылки
+
+---
+
+## Changelog (2026-03-09) — Enterprise-аудит: 43 бэкенд + 30 фронтенд проблем
+
+### P0 — Критические Runtime-ошибки
+
+**inventory/views.py — NameError: `_validate_org_fk` не определён**
+- ✅ Функция `_validate_org_fk(instance, org, label)` использовалась 20+ раз во всех actions (create, write-off, transfer, assemble, disassemble, correct), но тело функции отсутствовало → каждый вызов падал с `NameError`
+- ✅ Добавлено определение: проверяет `instance.organization_id != org.id`, поднимает DRF `ValidationError`
+
+**finance/views.py — CashShift.close() не закрывала смену**
+- ✅ Метод `close()` рассчитывал `discrepancy`, но **не устанавливал** `status=CLOSED`, `closed_by`, `closed_at`, `notes`
+- ✅ Исправлено: полный цикл закрытия с сохранением всех полей
+
+### P1 — Логические и Бизнес-ошибки
+
+**analytics/tasks.py — Полная переработка `calculate_daily_summary`**
+- ✅ Старая версия не передавала `organization` → `IntegrityError` (NOT NULL нарушение)
+- ✅ Не считала `cost`, `profit`, `avg_check`, `orders_count`, `new_customers`, `write_offs`
+- ✅ Переписана с `select_related('organization')` и полным расчётом всех 9 метрик DailySummary
+
+**sales/serializers.py — Удаление дублированного кода**
+- ✅ Удалён второй экземпляр `_CompositionWriteSerializer` (полный дубль класса)
+- ✅ Удалены дублированные поля `bouquet_components` в `SaleItemWriteSerializer` и `OrderItemWriteSerializer`
+
+**nomenclature/models.py — Дублирование индексов**
+- ✅ Удалён второй блок `indexes` в `Nomenclature.Meta` (полный дубль 4 индексов)
+
+**suppliers/views.py — Неверный fallback склада при приёмке**
+- ✅ `receive()` искал `is_default_for_sales=True` вместо `is_default_for_receiving=True`
+
+**sales/models.py — Каскадное удаление номенклатуры удаляло продажи**
+- ✅ `SaleItem.nomenclature`: `CASCADE` → `PROTECT`
+- ✅ `OrderItem.nomenclature`: `CASCADE` → `PROTECT`
+
+**finance/models.py — Каскадное удаление родительской категории**
+- ✅ `TransactionCategory.parent`: `CASCADE` → `SET_NULL` (предотвращение каскадного удаления дерева категорий)
+
+### P2 — Meta Ordering для стабильной пагинации
+
+Добавлен `ordering` во все Django-модели для устранения `UnorderedObjectListWarning` и обеспечения детерминированной пагинации:
+
+| Приложение | Модели | Ordering |
+|------------|--------|----------|
+| core | Organization, TradingPoint, Warehouse, PaymentMethod | `['name']` |
+| core | User | `['last_name', 'first_name']` |
+| finance | Wallet, TransactionCategory | `['name']` |
+| finance | Debt | `['-created_at']` |
+| customers | CustomerGroup | `['name']` |
+| customers | CustomerAddress | `['-is_default', 'label']` |
+| suppliers | Supplier | `['name']` |
+| suppliers | SupplierNomenclature | `['supplier', 'nomenclature']` |
+| suppliers | SupplierOrderItem | `['order']` |
+| delivery | DeliveryZone, Courier | `['name']` |
+| marketing | AdChannel, Discount, LoyaltyProgram | `['name']` |
+| marketing | PromoCode | `['code']` |
+| staff | Position | `['name']` |
+| staff | PayrollScheme | `['-started_at']` |
+| inventory | StockBalance | `['warehouse', 'nomenclature']` |
+| inventory | InventoryDocument, Reserve | `['-created_at']` |
+
+### P1 — Frontend
+
+**NomenclaturePage.tsx — Дублированные поля**
+- ✅ Удалены дублированные `stem_length` и `diameter` в интерфейсе `NomItem`, `defaultItemForm`, и `openItemDlg`
+
+**api.ts — Timeout и Retry**
+- ✅ Добавлен `timeout: 30000` (было без ограничения)
+- ✅ Retry-логика исключает 401 из кандидатов на повторную попытку
+
+**App.tsx — 404 Catch-all**
+- ✅ Добавлен `<Route path="*">` → страница «Страница не найдена» с навигацией на дашборд
+
+**Итого:** 2 P0, 9 P1, 24 P2 = **35 проблем исправлено**
+
 ---
 
 ## Changelog — Глубокий 5-проходный аудит (Passes 1–5)

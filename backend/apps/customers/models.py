@@ -19,6 +19,7 @@ class CustomerGroup(models.Model):
         db_table = 'customer_groups'
         verbose_name = 'Группа клиентов'
         verbose_name_plural = 'Группы клиентов'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -124,6 +125,7 @@ class CustomerAddress(models.Model):
         db_table = 'customer_addresses'
         verbose_name = 'Адрес клиента'
         verbose_name_plural = 'Адреса клиентов'
+        ordering = ['-is_default', 'label']
 
     def __str__(self):
         return f'{self.label}: {self.address[:50]}'

@@ -20,6 +20,20 @@ from .services import (
 )
 from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter
 
+
+def _validate_org_fk(instance, org, label='Объект'):
+    """
+    Проверяет, что объект принадлежит текущей организации (cross-tenant guard).
+    Выбрасывает DRF ValidationError если организация не совпадает.
+    """
+    from rest_framework.exceptions import ValidationError as DRFValidationError
+    instance_org = getattr(instance, 'organization_id', None) or getattr(instance, 'organization', None)
+    if instance_org and str(instance_org) != str(org.id):
+        raise DRFValidationError({
+            'detail': f'{label} принадлежит другой организации.'
+        })
+
+
 class BatchViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'head', 'options']
     """

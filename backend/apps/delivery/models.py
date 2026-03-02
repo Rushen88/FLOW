@@ -23,6 +23,7 @@ class DeliveryZone(models.Model):
         db_table = 'delivery_zones'
         verbose_name = 'Зона доставки'
         verbose_name_plural = 'Зоны доставки'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -61,6 +62,7 @@ class Courier(models.Model):
         db_table = 'couriers'
         verbose_name = 'Курьер'
         verbose_name_plural = 'Курьеры'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
