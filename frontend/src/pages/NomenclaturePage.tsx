@@ -1,10 +1,15 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import {
   Box, Typography, TextField, Button, Tab, Tabs, IconButton,
   Chip, MenuItem, Switch, FormControlLabel, Card, CardContent,
+  Collapse, Tooltip, alpha,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
-import { Add, Edit, Delete, Inventory, Category, Straighten, AutoAwesome, AddCircleOutline, RemoveCircleOutline } from '@mui/icons-material'
+import {
+  Add, Edit, Delete, Inventory, Category, Straighten, AutoAwesome,
+  AddCircleOutline, RemoveCircleOutline, FolderOpen, Folder,
+  ExpandMore, ChevronRight, CreateNewFolder, Search,
+} from '@mui/icons-material'
 import api from '../api'
 import { useNotification } from '../contexts/NotificationContext'
 import extractError from '../utils/extractError'
@@ -16,11 +21,11 @@ import ConfirmDialog from '../components/ConfirmDialog'
 interface NomItem {
   id: string; organization: string; group: string | null; name: string; nomenclature_type: string
   sku: string; barcode: string; unit: string | null; purchase_price: string; retail_price: string
-  min_price: string; markup_percent: string; image: string | null; color: string; country: string; stem_length: number | null; diameter: number | null;
-  shelf_life_days: number | null
+  min_price: string; markup_percent: string; image: string | null; color: string; country: string
+  stem_length: number | null; diameter: number | null; shelf_life_days: number | null
   min_stock: number | null; is_active: boolean; notes: string; group_name: string; unit_name: string
 }
-interface NomGroup { id: string; organization: string; name: string; parent: string | null; sort_order: number; children?: NomGroup[] }
+interface NomGroup { id: string; organization: string; name: string; parent: string | null; children?: NomGroup[] }
 interface MeasureUnit { id: string; name: string; short_name: string }
 interface BouquetComponent {
   id: string; template: string; nomenclature: string; quantity: string
@@ -29,6 +34,19 @@ interface BouquetComponent {
 interface BouquetTemplate {
   id: string; nomenclature: string; bouquet_name: string; assembly_time_minutes: number
   difficulty: number; description: string; components: BouquetComponent[]
+}
+
+// Tree types from /groups/tree/ endpoint
+interface TreeItem {
+  id: string; name: string; nomenclature_type: string; sku: string
+  retail_price: string; purchase_price: string; is_active: boolean
+}
+interface TreeGroup {
+  id: string; name: string; parent: string | null
+  children: TreeGroup[]; items: TreeItem[]
+}
+interface TreeData {
+  groups: TreeGroup[]; root_items: TreeItem[]
 }
 
 const NOM_TYPES = [
@@ -55,28 +73,141 @@ const defaultItemForm = () => ({
   shelf_life_days: '' as string | number, min_stock: '' as string | number, is_active: true, notes: '',
 })
 
+// ═══════════════════════════════════════════════════════════
+// Tree Row Component — recursive rendering of groups + items
+// ═══════════════════════════════════════════════════════════
+function TreeGroupRow({ group, depth, expanded, onToggle, selectedGroupId, onSelectGroup, onEditItem, onDeleteItem, onEditGroup, onDeleteGroup }: {
+  group: TreeGroup; depth: number
+  expanded: Record<string, boolean>; onToggle: (id: string) => void
+  selectedGroupId: string | null; onSelectGroup: (id: string | null) => void
+  onEditItem: (id: string) => void; onDeleteItem: (id: string, name: string) => void
+  onEditGroup: (id: string) => void; onDeleteGroup: (id: string, name: string) => void
+}) {
+  const isOpen = expanded[group.id] ?? false
+  const isSelected = selectedGroupId === group.id
+  const hasChildren = group.children.length > 0 || group.items.length > 0
+
+  return (
+    <Fragment>
+      {/* Group row */}
+      <Box
+        onClick={(e) => { e.stopPropagation(); onSelectGroup(isSelected ? null : group.id) }}
+        sx={{
+          display: 'flex', alignItems: 'center', gap: 0.5,
+          pl: depth * 3 + 0.5, pr: 1, py: 0.4,
+          cursor: 'pointer', userSelect: 'none',
+          bgcolor: isSelected ? 'action.selected' : 'transparent',
+          '&:hover': { bgcolor: isSelected ? 'action.selected' : 'action.hover' },
+          borderBottom: '1px solid', borderColor: 'divider',
+          minHeight: 36,
+        }}
+      >
+        <IconButton
+          size="small" sx={{ p: 0.25 }}
+          onClick={(e) => { e.stopPropagation(); onToggle(group.id) }}
+        >
+          {hasChildren ? (isOpen ? <ExpandMore fontSize="small" /> : <ChevronRight fontSize="small" />) : <Box sx={{ width: 20 }} />}
+        </IconButton>
+        {isOpen ? <FolderOpen fontSize="small" color="warning" /> : <Folder fontSize="small" color="warning" />}
+        <Typography variant="body2" fontWeight={600} sx={{ flex: 1, ml: 0.5 }} noWrap>
+          {group.name}
+        </Typography>
+        <Chip label={`${countAllItems(group)}`} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+        <Box sx={{ display: 'flex', ml: 0.5, opacity: 0.6, '&:hover': { opacity: 1 } }}>
+          <Tooltip title="Редактировать группу"><IconButton size="small" sx={{ p: 0.25 }} onClick={(e) => { e.stopPropagation(); onEditGroup(group.id) }}><Edit sx={{ fontSize: 16 }} /></IconButton></Tooltip>
+          <Tooltip title="Удалить группу"><IconButton size="small" sx={{ p: 0.25 }} onClick={(e) => { e.stopPropagation(); onDeleteGroup(group.id, group.name) }}><Delete sx={{ fontSize: 16 }} /></IconButton></Tooltip>
+        </Box>
+      </Box>
+      {/* Children */}
+      <Collapse in={isOpen} unmountOnExit>
+        {group.children.map(child => (
+          <TreeGroupRow
+            key={child.id} group={child} depth={depth + 1}
+            expanded={expanded} onToggle={onToggle}
+            selectedGroupId={selectedGroupId} onSelectGroup={onSelectGroup}
+            onEditItem={onEditItem} onDeleteItem={onDeleteItem}
+            onEditGroup={onEditGroup} onDeleteGroup={onDeleteGroup}
+          />
+        ))}
+        {group.items.map(item => (
+          <TreeItemRow key={item.id} item={item} depth={depth + 1}
+            onEdit={onEditItem} onDelete={onDeleteItem} />
+        ))}
+      </Collapse>
+    </Fragment>
+  )
+}
+
+function TreeItemRow({ item, depth, onEdit, onDelete }: {
+  item: TreeItem; depth: number
+  onEdit: (id: string) => void; onDelete: (id: string, name: string) => void
+}) {
+  return (
+    <Box
+      sx={{
+        display: 'flex', alignItems: 'center', gap: 0.5,
+        pl: depth * 3 + 3.5, pr: 1, py: 0.3,
+        '&:hover': { bgcolor: 'action.hover' },
+        borderBottom: '1px solid', borderColor: 'divider',
+        minHeight: 32,
+        opacity: item.is_active ? 1 : 0.5,
+      }}
+    >
+      <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap>{item.name}</Typography>
+      <Chip label={nomTypeLabel(item.nomenclature_type)} size="small" variant="outlined"
+        sx={{ height: 20, fontSize: '0.65rem', flexShrink: 0 }} />
+      {item.sku && (
+        <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0, mx: 0.5 }}>{item.sku}</Typography>
+      )}
+      <Typography variant="body2" sx={{ minWidth: 70, textAlign: 'right', flexShrink: 0 }}>
+        {item.retail_price && parseFloat(item.retail_price) > 0 ? `${item.retail_price} ₽` : '—'}
+      </Typography>
+      {!item.is_active && <Chip label="Неакт." size="small" color="default" sx={{ height: 18, fontSize: '0.6rem' }} />}
+      <Box sx={{ display: 'flex', ml: 0.5, opacity: 0.6, '&:hover': { opacity: 1 }, flexShrink: 0 }}>
+        <Tooltip title="Редактировать"><IconButton size="small" sx={{ p: 0.25 }} onClick={() => onEdit(item.id)}><Edit sx={{ fontSize: 16 }} /></IconButton></Tooltip>
+        <Tooltip title="Удалить"><IconButton size="small" sx={{ p: 0.25 }} onClick={() => onDelete(item.id, item.name)}><Delete sx={{ fontSize: 16 }} /></IconButton></Tooltip>
+      </Box>
+    </Box>
+  )
+}
+
+function countAllItems(group: TreeGroup): number {
+  let count = group.items.length
+  for (const child of group.children) count += countAllItems(child)
+  return count
+}
+
+// ═══════════════════════════════════════════════════════════
+// Main Page
+// ═══════════════════════════════════════════════════════════
 export default function NomenclaturePage() {
   const { notify } = useNotification()
   const [tab, setTab] = useState(0)
 
-  // ─── Nomenclature Items ───
+  // ─── Tree data ───
+  const [treeData, setTreeData] = useState<TreeData | null>(null)
+  const [treeLoading, setTreeLoading] = useState(false)
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
+  const [treeSearch, setTreeSearch] = useState('')
+
+  // ─── All items (for forms / bouquet templates) ───
   const [items, setItems] = useState<NomItem[]>([])
-  const [itemLoad, setItemLoad] = useState(false)
-  const [itemSearch, setItemSearch] = useState('')
-  const [filterType, setFilterType] = useState('')
-  const [filterGroup, setFilterGroup] = useState('')
+
+  // ─── Item dialog ───
   const [itemDlg, setItemDlg] = useState(false)
   const [editItem, setEditItem] = useState<NomItem | null>(null)
   const [itemForm, setItemForm] = useState(defaultItemForm())
   const [itemSaving, setItemSaving] = useState(false)
-  const [delItem, setDelItem] = useState<NomItem | null>(null)
+  const [delItemId, setDelItemId] = useState<string | null>(null)
+  const [delItemName, setDelItemName] = useState('')
 
   // ─── Groups ───
   const [groups, setGroups] = useState<NomGroup[]>([])
   const [grpLoad, setGrpLoad] = useState(false)
   const [grpDlg, setGrpDlg] = useState(false)
   const [editGrp, setEditGrp] = useState<NomGroup | null>(null)
-  const [grpForm, setGrpForm] = useState({ name: '', parent: '' as string, sort_order: 0 })
+  const [grpForm, setGrpForm] = useState({ name: '', parent: '' as string })
   const [grpSaving, setGrpSaving] = useState(false)
   const [delGrp, setDelGrp] = useState<NomGroup | null>(null)
 
@@ -100,17 +231,19 @@ export default function NomenclaturePage() {
   const [delTpl, setDelTpl] = useState<BouquetTemplate | null>(null)
 
   // ─── Fetchers ───
+  const fetchTree = useCallback(() => {
+    setTreeLoading(true)
+    api.get('/nomenclature/groups/tree/')
+      .then(res => setTreeData(res.data))
+      .catch(() => notify('Ошибка загрузки дерева номенклатуры', 'error'))
+      .finally(() => setTreeLoading(false))
+  }, [notify])
+
   const fetchItems = useCallback(() => {
-    setItemLoad(true)
-    const params: Record<string, string> = {}
-    if (itemSearch) params.search = itemSearch
-    if (filterType) params.nomenclature_type = filterType
-    if (filterGroup) params.group = filterGroup
-    api.get('/nomenclature/items/', { params })
+    api.get('/nomenclature/items/')
       .then(res => setItems(res.data.results || res.data || []))
-      .catch(() => notify('Ошибка загрузки номенклатуры', 'error'))
-      .finally(() => setItemLoad(false))
-  }, [itemSearch, filterType, filterGroup, notify])
+      .catch(() => {})
+  }, [])
 
   const fetchGroups = useCallback(() => {
     setGrpLoad(true)
@@ -136,26 +269,72 @@ export default function NomenclaturePage() {
       .finally(() => setTplLoad(false))
   }, [notify])
 
-  useEffect(() => { fetchItems(); fetchGroups(); fetchUnits() }, [fetchItems, fetchGroups, fetchUnits])
+  useEffect(() => { fetchTree(); fetchItems(); fetchGroups(); fetchUnits() }, [fetchTree, fetchItems, fetchGroups, fetchUnits])
   useEffect(() => { if (tab === 1) fetchGroups() }, [tab, fetchGroups])
   useEffect(() => { if (tab === 2) fetchUnits() }, [tab, fetchUnits])
-  useEffect(() => { if (tab === 3) fetchTemplates() }, [tab, fetchTemplates])
+  useEffect(() => { if (tab === 3) { fetchTemplates(); fetchItems() } }, [tab, fetchTemplates, fetchItems])
 
   // ─── Flatten groups for selects ───
-    const flatGroups: NomGroup[] = []
-    const seenGroups = new Set<string>()
+  const flatGroups = useMemo(() => {
+    const result: NomGroup[] = []
+    const seen = new Set<string>()
     const flatten = (list: NomGroup[]) => {
-      list.forEach(g => { 
-        if (!seenGroups.has(g.id)) {
-          seenGroups.add(g.id)
-          flatGroups.push(g)
-        }
-        if (g.children?.length) flatten(g.children) 
+      list.forEach(g => {
+        if (!seen.has(g.id)) { seen.add(g.id); result.push(g) }
+        if (g.children?.length) flatten(g.children)
       })
     }
     flatten(groups)
+    return result
+  }, [groups])
 
+  // ─── Filter tree by search term ───
+  const filteredTree = useMemo((): TreeData | null => {
+    if (!treeData) return null
+    if (!treeSearch.trim()) return treeData
+    const term = treeSearch.toLowerCase()
 
+    function filterGroup(g: TreeGroup): TreeGroup | null {
+      const matchedItems = g.items.filter(i =>
+        i.name.toLowerCase().includes(term) || i.sku.toLowerCase().includes(term))
+      const matchedChildren = g.children.map(filterGroup).filter(Boolean) as TreeGroup[]
+      if (matchedItems.length > 0 || matchedChildren.length > 0 || g.name.toLowerCase().includes(term)) {
+        return { ...g, children: matchedChildren, items: matchedItems }
+      }
+      return null
+    }
+
+    const groups = treeData.groups.map(filterGroup).filter(Boolean) as TreeGroup[]
+    const root_items = treeData.root_items.filter(i =>
+      i.name.toLowerCase().includes(term) || i.sku.toLowerCase().includes(term))
+    return { groups, root_items }
+  }, [treeData, treeSearch])
+
+  // Auto-expand when searching
+  useEffect(() => {
+    if (treeSearch.trim() && filteredTree) {
+      const ids: Record<string, boolean> = {}
+      const collect = (g: TreeGroup) => { ids[g.id] = true; g.children.forEach(collect) }
+      filteredTree.groups.forEach(collect)
+      setExpanded(ids)
+    }
+  }, [treeSearch, filteredTree])
+
+  const toggleExpand = (id: string) => {
+    setExpanded(prev => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const expandAll = () => {
+    if (!treeData) return
+    const ids: Record<string, boolean> = {}
+    const collect = (g: TreeGroup) => { ids[g.id] = true; g.children.forEach(collect) }
+    treeData.groups.forEach(collect)
+    setExpanded(ids)
+  }
+
+  const collapseAll = () => setExpanded({})
+
+  // ─── Item CRUD ───
   const openItemDlg = (item?: NomItem) => {
     if (item) {
       setEditItem(item)
@@ -164,16 +343,26 @@ export default function NomenclaturePage() {
         group: item.group || '', sku: item.sku || '', barcode: item.barcode || '',
         unit: item.unit || '', purchase_price: item.purchase_price || '',
         retail_price: item.retail_price || '', min_price: item.min_price || '',
-        markup_percent: item.markup_percent || '', color: item.color || '', stem_length: item.stem_length ?? '', diameter: item.diameter ?? '',
-        country: item.country || '',
-        shelf_life_days: item.shelf_life_days ?? '',
+        markup_percent: item.markup_percent || '', color: item.color || '',
+        stem_length: item.stem_length ?? '', diameter: item.diameter ?? '',
+        country: item.country || '', shelf_life_days: item.shelf_life_days ?? '',
         min_stock: item.min_stock ?? '', is_active: item.is_active, notes: item.notes || '',
       })
     } else {
       setEditItem(null)
-      setItemForm(defaultItemForm())
+      const form = defaultItemForm()
+      // If a group is selected, pre-fill the group field
+      if (selectedGroupId) form.group = selectedGroupId
+      setItemForm(form)
     }
     setItemDlg(true)
+  }
+
+  const openItemDlgById = async (id: string) => {
+    try {
+      const res = await api.get(`/nomenclature/items/${id}/`)
+      openItemDlg(res.data)
+    } catch { notify('Не удалось загрузить позицию', 'error') }
   }
 
   const saveItem = async () => {
@@ -190,22 +379,37 @@ export default function NomenclaturePage() {
       if (!d.markup_percent && d.markup_percent !== 0) d.markup_percent = '0.00'
       if (editItem) { await api.patch(`/nomenclature/items/${editItem.id}/`, d); notify('Позиция обновлена') }
       else { await api.post('/nomenclature/items/', d); notify('Позиция создана') }
-      setItemDlg(false); fetchItems()
+      setItemDlg(false); fetchTree(); fetchItems()
     } catch (err) { notify(extractError(err, 'Ошибка сохранения позиции'), 'error') }
     setItemSaving(false)
   }
 
+  const confirmDeleteItem = (id: string, name: string) => { setDelItemId(id); setDelItemName(name) }
   const removeItem = async () => {
-    if (!delItem) return
-    try { await api.delete(`/nomenclature/items/${delItem.id}/`); notify('Позиция удалена'); setDelItem(null); fetchItems() }
+    if (!delItemId) return
+    try { await api.delete(`/nomenclature/items/${delItemId}/`); notify('Позиция удалена'); setDelItemId(null); fetchTree(); fetchItems() }
     catch (err) { notify(extractError(err, 'Ошибка удаления позиции'), 'error') }
   }
 
   // ─── Group CRUD ───
   const openGrpDlg = (g?: NomGroup) => {
-    if (g) { setEditGrp(g); setGrpForm({ name: g.name, parent: g.parent || '', sort_order: g.sort_order || 0 }) }
-    else { setEditGrp(null); setGrpForm({ name: '', parent: '', sort_order: 0 }) }
+    if (g) { setEditGrp(g); setGrpForm({ name: g.name, parent: g.parent || '' }) }
+    else {
+      setEditGrp(null)
+      // If a group is selected, new group becomes its child
+      setGrpForm({ name: '', parent: selectedGroupId || '' })
+    }
     setGrpDlg(true)
+  }
+
+  const openGrpDlgById = async (id: string) => {
+    try {
+      const res = await api.get(`/nomenclature/groups/${id}/`)
+      const g = res.data
+      setEditGrp(g)
+      setGrpForm({ name: g.name, parent: g.parent || '' })
+      setGrpDlg(true)
+    } catch { notify('Не удалось загрузить группу', 'error') }
   }
 
   const saveGrp = async () => {
@@ -215,14 +419,20 @@ export default function NomenclaturePage() {
       if (!d.parent) d.parent = null
       if (editGrp) { await api.patch(`/nomenclature/groups/${editGrp.id}/`, d); notify('Группа обновлена') }
       else { await api.post('/nomenclature/groups/', d); notify('Группа создана') }
-      setGrpDlg(false); fetchGroups()
+      setGrpDlg(false); fetchGroups(); fetchTree()
     } catch (err) { notify(extractError(err, 'Ошибка сохранения группы'), 'error') }
     setGrpSaving(false)
   }
 
+  const confirmDeleteGroup = (id: string, name: string) => {
+    const g = flatGroups.find(x => x.id === id)
+    if (g) setDelGrp(g)
+    else setDelGrp({ id, name, organization: '', parent: null })
+  }
+
   const removeGrp = async () => {
     if (!delGrp) return
-    try { await api.delete(`/nomenclature/groups/${delGrp.id}/`); notify('Группа удалена'); setDelGrp(null); fetchGroups() }
+    try { await api.delete(`/nomenclature/groups/${delGrp.id}/`); notify('Группа удалена'); setDelGrp(null); fetchGroups(); fetchTree() }
     catch (err) { notify(extractError(err, 'Ошибка удаления группы'), 'error') }
   }
 
@@ -279,11 +489,9 @@ export default function NomenclaturePage() {
   const addTplComponent = () => {
     setTplComponents([...tplComponents, { nomenclature: '', quantity: '1', is_required: true }])
   }
-
   const removeTplComponent = (idx: number) => {
     setTplComponents(tplComponents.filter((_, i) => i !== idx))
   }
-
   const updateTplComponent = (idx: number, field: string, value: any) => {
     setTplComponents(tplComponents.map((c, i) => i === idx ? { ...c, [field]: value } : c))
   }
@@ -291,7 +499,6 @@ export default function NomenclaturePage() {
   const saveTpl = async () => {
     setTplSaving(true)
     try {
-      // Validate
       const validComponents = tplComponents.filter(c => c.nomenclature && parseFloat(c.quantity) > 0)
       if (!validComponents.length) {
         notify('Добавьте хотя бы один компонент', 'error')
@@ -300,56 +507,40 @@ export default function NomenclaturePage() {
       }
 
       if (editTpl) {
-        // Update template
         await api.patch(`/nomenclature/bouquet-templates/${editTpl.id}/`, {
           bouquet_name: tplForm.bouquet_name,
           assembly_time_minutes: tplForm.assembly_time_minutes,
           difficulty: tplForm.difficulty,
           description: tplForm.description,
         })
-
-        // Delete old components and create new ones
         const oldComponents = editTpl.components || []
         await Promise.all(oldComponents.map(c => api.delete(`/nomenclature/bouquet-components/${c.id}/`)))
         await Promise.all(validComponents.map(c =>
           api.post('/nomenclature/bouquet-components/', {
-            template: editTpl.id,
-            nomenclature: c.nomenclature,
-            quantity: c.quantity,
-            is_required: c.is_required,
+            template: editTpl.id, nomenclature: c.nomenclature,
+            quantity: c.quantity, is_required: c.is_required,
           })
         ))
         notify('Шаблон обновлён')
       } else {
-        // Create nomenclature item first for the new bouquet
         const nomRes = await api.post('/nomenclature/items/', {
           name: tplForm.bouquet_name || 'Новый букет',
-          nomenclature_type: 'bouquet',
-          is_active: true
+          nomenclature_type: 'bouquet', is_active: true,
         })
-        const nomId = nomRes.data.id
-
-        // Create template
         const tplRes = await api.post('/nomenclature/bouquet-templates/', {
-          nomenclature: nomId,
-          bouquet_name: tplForm.bouquet_name,
+          nomenclature: nomRes.data.id, bouquet_name: tplForm.bouquet_name,
           assembly_time_minutes: tplForm.assembly_time_minutes,
-          difficulty: tplForm.difficulty,
-          description: tplForm.description,
+          difficulty: tplForm.difficulty, description: tplForm.description,
         })
-        const newTplId = tplRes.data.id
-        // Create components
         await Promise.all(validComponents.map(c =>
           api.post('/nomenclature/bouquet-components/', {
-            template: newTplId,
-            nomenclature: c.nomenclature,
-            quantity: c.quantity,
-            is_required: c.is_required,
+            template: tplRes.data.id, nomenclature: c.nomenclature,
+            quantity: c.quantity, is_required: c.is_required,
           })
         ))
         notify('Шаблон создан')
       }
-      setTplDlg(false); fetchTemplates(); fetchItems()
+      setTplDlg(false); fetchTemplates(); fetchItems(); fetchTree()
     } catch (err) { notify(extractError(err, 'Ошибка сохранения шаблона'), 'error') }
     setTplSaving(false)
   }
@@ -362,68 +553,122 @@ export default function NomenclaturePage() {
 
   const tplDisplayName = (tpl: BouquetTemplate) => tpl.bouquet_name || items.find(i => i.id === tpl.nomenclature)?.name || '—'
 
-  // ─── Find parent group name ───
   const parentName = (id: string | null) => {
     if (!id) return '—'
-    const g = flatGroups.find(x => x.id === id)
-    return g?.name || '—'
+    return flatGroups.find(x => x.id === id)?.name || '—'
   }
+
+  // Count total items in tree
+  const totalCount = useMemo(() => {
+    if (!treeData) return 0
+    let count = treeData.root_items.length
+    const countGroup = (g: TreeGroup): number => g.items.length + g.children.reduce((s, c) => s + countGroup(c), 0)
+    treeData.groups.forEach(g => { count += countGroup(g) })
+    return count
+  }, [treeData])
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={700} sx={{ mb: 3 }}>Номенклатура</Typography>
+      <Typography variant="h5" fontWeight={700} sx={{ mb: 2 }}>Номенклатура</Typography>
       <Card>
-        <CardContent>
-          <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}>
+        <CardContent sx={{ pb: '16px !important' }}>
+          <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
             <Tab icon={<Inventory />} iconPosition="start" label="Номенклатура" />
             <Tab icon={<Category />} iconPosition="start" label="Группы" />
             <Tab icon={<Straighten />} iconPosition="start" label="Единицы измерения" />
             <Tab icon={<AutoAwesome />} iconPosition="start" label="Шаблоны букетов" />
           </Tabs>
 
-          {/* ── Tab 0: Nomenclature Items ── */}
+          {/* ══════════════════════════════════════════════════════════════
+              Tab 0: Nomenclature Tree View
+              ══════════════════════════════════════════════════════════════ */}
           {tab === 0 && (
-            <>
-              <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-                <TextField size="small" select label="Тип" value={filterType}
-                  onChange={e => setFilterType(e.target.value)} sx={{ minWidth: 180 }}>
-                  <MenuItem value="">Все типы</MenuItem>
-                  {NOM_TYPES.map(t => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
-                </TextField>
-                <TextField size="small" select label="Группа" value={filterGroup}
-                  onChange={e => setFilterGroup(e.target.value)} sx={{ minWidth: 180 }}>
-                  <MenuItem value="">Все группы</MenuItem>
-                  {flatGroups.map(g => <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>)}
-                </TextField>
+            <Box>
+              {/* Toolbar */}
+              <Box sx={{ display: 'flex', gap: 1, mb: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
+                <TextField
+                  size="small" placeholder="Поиск по названию, артикулу..."
+                  value={treeSearch} onChange={(e) => setTreeSearch(e.target.value)}
+                  sx={{ minWidth: 260 }}
+                  slotProps={{ input: { startAdornment: <Search sx={{ mr: 0.5, color: 'text.secondary', fontSize: 20 }} /> } }}
+                />
+                <Button size="small" variant="text" onClick={expandAll} sx={{ textTransform: 'none', minWidth: 'auto' }}>
+                  Развернуть все
+                </Button>
+                <Button size="small" variant="text" onClick={collapseAll} sx={{ textTransform: 'none', minWidth: 'auto' }}>
+                  Свернуть все
+                </Button>
+                <Chip label={`Всего: ${totalCount}`} size="small" variant="outlined" />
+                <Box sx={{ flexGrow: 1 }} />
+                <Button variant="outlined" size="small" startIcon={<CreateNewFolder />} onClick={() => openGrpDlg()}>
+                  Добавить группу
+                </Button>
+                <Button variant="contained" size="small" startIcon={<Add />} onClick={() => openItemDlg()}>
+                  Добавить позицию
+                </Button>
               </Box>
-              <DataTable
-                columns={[
-                  { key: 'name', label: 'Название', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
-                  { key: 'nomenclature_type', label: 'Тип', render: (v: string) => <Chip label={nomTypeLabel(v)} size="small" variant="outlined" /> },
-                  { key: 'group_name', label: 'Группа' },
-                  { key: 'sku', label: 'Артикул' },
-                  { key: 'purchase_price', label: 'Закупка', align: 'right', render: (v: string) => v ? `${v} ₽` : '—' },
-                  { key: 'retail_price', label: 'Розница', align: 'right', render: (v: string) => v ? `${v} ₽` : '—' },
-                  { key: 'is_active', label: 'Статус', render: (v: boolean) => <Chip label={v ? 'Активна' : 'Неактивна'} size="small" color={v ? 'success' : 'default'} /> },
-                  { key: '_act', label: '', align: 'center', width: 100, render: (_: any, row: NomItem) => (<>
-                    <IconButton size="small" onClick={() => openItemDlg(row)}><Edit fontSize="small" /></IconButton>
-                    <IconButton size="small" onClick={() => setDelItem(row)}><Delete fontSize="small" /></IconButton>
-                  </>) },
-                ]}
-                rows={items} loading={itemLoad} emptyText="Нет позиций номенклатуры"
-                search={itemSearch} onSearchChange={setItemSearch} searchPlaceholder="Поиск по названию, артикулу, штрих-коду..."
-                headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openItemDlg()}>Добавить позицию</Button>}
-              />
-            </>
+
+              {/* Selected group hint */}
+              {selectedGroupId && (
+                <Box sx={{
+                  display: 'flex', alignItems: 'center', gap: 1, mb: 1,
+                  px: 1.5, py: 0.5, borderRadius: 1,
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                  border: '1px solid', borderColor: 'primary.light',
+                }}>
+                  <Folder fontSize="small" color="primary" />
+                  <Typography variant="body2" color="primary.main">
+                    Выбрана группа: <b>{flatGroups.find(g => g.id === selectedGroupId)?.name || '...'}</b> — новые позиции и группы будут добавлены в неё
+                  </Typography>
+                  <Button size="small" variant="text" onClick={() => setSelectedGroupId(null)} sx={{ ml: 'auto', textTransform: 'none' }}>
+                    Сбросить
+                  </Button>
+                </Box>
+              )}
+
+              {/* Tree container */}
+              <Box sx={{
+                border: '1px solid', borderColor: 'divider', borderRadius: 1,
+                maxHeight: 'calc(100vh - 320px)', overflow: 'auto',
+                bgcolor: 'background.paper',
+              }}>
+                {treeLoading ? (
+                  <Box sx={{ p: 3, textAlign: 'center' }}>
+                    <Typography color="text.secondary">Загрузка...</Typography>
+                  </Box>
+                ) : !filteredTree || (filteredTree.groups.length === 0 && filteredTree.root_items.length === 0) ? (
+                  <Box sx={{ p: 3, textAlign: 'center' }}>
+                    <Typography color="text.secondary">
+                      {treeSearch ? 'Ничего не найдено' : 'Нет позиций номенклатуры'}
+                    </Typography>
+                  </Box>
+                ) : (
+                  <>
+                    {filteredTree.groups.map(group => (
+                      <TreeGroupRow
+                        key={group.id} group={group} depth={0}
+                        expanded={expanded} onToggle={toggleExpand}
+                        selectedGroupId={selectedGroupId} onSelectGroup={setSelectedGroupId}
+                        onEditItem={openItemDlgById} onDeleteItem={confirmDeleteItem}
+                        onEditGroup={openGrpDlgById} onDeleteGroup={confirmDeleteGroup}
+                      />
+                    ))}
+                    {filteredTree.root_items.map(item => (
+                      <TreeItemRow key={item.id} item={item} depth={0}
+                        onEdit={openItemDlgById} onDelete={confirmDeleteItem} />
+                    ))}
+                  </>
+                )}
+              </Box>
+            </Box>
           )}
 
-          {/* ── Tab 1: Groups ── */}
+          {/* ══ Tab 1: Groups ══ */}
           {tab === 1 && (
             <DataTable
               columns={[
                 { key: 'name', label: 'Название', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
                 { key: 'parent', label: 'Родительская группа', render: (v: string | null) => parentName(v) },
-                { key: 'sort_order', label: 'Сортировка', align: 'right' },
                 { key: '_act', label: '', align: 'center', width: 100, render: (_: any, row: NomGroup) => (<>
                   <IconButton size="small" onClick={() => openGrpDlg(row)}><Edit fontSize="small" /></IconButton>
                   <IconButton size="small" onClick={() => setDelGrp(row)}><Delete fontSize="small" /></IconButton>
@@ -434,7 +679,7 @@ export default function NomenclaturePage() {
             />
           )}
 
-          {/* ── Tab 2: Measure Units ── */}
+          {/* ══ Tab 2: Measure Units ══ */}
           {tab === 2 && (
             <DataTable
               columns={[
@@ -450,7 +695,7 @@ export default function NomenclaturePage() {
             />
           )}
 
-          {/* ── Tab 3: Bouquet Templates ── */}
+          {/* ══ Tab 3: Bouquet Templates ══ */}
           {tab === 3 && (
             <DataTable
               columns={[
@@ -585,7 +830,6 @@ export default function NomenclaturePage() {
           </Grid>
         </Grid>
 
-        {/* Components */}
         <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 1 }}>Компоненты букета</Typography>
         {tplComponents.map((comp, idx) => (
           <Grid container spacing={1} key={idx} alignItems="center">
@@ -615,8 +859,6 @@ export default function NomenclaturePage() {
         <Button startIcon={<AddCircleOutline />} onClick={addTplComponent} size="small">
           Добавить компонент
         </Button>
-
-        {/* Estimated cost */}
         {tplComponents.length > 0 && (
           <Typography variant="body2" sx={{ mt: 1, fontWeight: 500 }}>
             Расчётная себестоимость: {tplComponents.reduce((sum, c) => {
@@ -635,11 +877,9 @@ export default function NomenclaturePage() {
           onChange={e => setGrpForm({ ...grpForm, name: e.target.value })} />
         <TextField label="Родительская группа" select fullWidth value={grpForm.parent}
           onChange={e => setGrpForm({ ...grpForm, parent: e.target.value })}>
-          <MenuItem value="">Без родителя</MenuItem>
+          <MenuItem value="">Корневая (без родителя)</MenuItem>
           {flatGroups.filter(g => g.id !== editGrp?.id).map(g => <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>)}
         </TextField>
-        <TextField label="Сортировка" type="number" fullWidth value={grpForm.sort_order}
-          onChange={e => setGrpForm({ ...grpForm, sort_order: Number(e.target.value) })} />
       </EntityFormDialog>
 
       {/* ─── Unit Dialog ─── */}
@@ -653,8 +893,8 @@ export default function NomenclaturePage() {
       </EntityFormDialog>
 
       {/* ─── Confirm Dialogs ─── */}
-      <ConfirmDialog open={!!delItem} title="Удалить позицию?" message={`Удалить "${delItem?.name}"? Это действие нельзя отменить.`}
-        onConfirm={removeItem} onCancel={() => setDelItem(null)} />
+      <ConfirmDialog open={!!delItemId} title="Удалить позицию?" message={`Удалить "${delItemName}"? Это действие нельзя отменить.`}
+        onConfirm={removeItem} onCancel={() => setDelItemId(null)} />
       <ConfirmDialog open={!!delGrp} title="Удалить группу?" message={`Удалить группу "${delGrp?.name}"?`}
         onConfirm={removeGrp} onCancel={() => setDelGrp(null)} />
       <ConfirmDialog open={!!delUnit} title="Удалить единицу?" message={`Удалить единицу "${delUnit?.name}"?`}

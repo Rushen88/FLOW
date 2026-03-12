@@ -1,13 +1,16 @@
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from rest_framework import viewsets, filters
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import NomenclatureGroup, MeasureUnit, Nomenclature, BouquetTemplate, BouquetComponent
 from .serializers import (
     NomenclatureGroupSerializer, MeasureUnitSerializer,
     NomenclatureSerializer, NomenclatureListSerializer,
     BouquetTemplateSerializer, BouquetComponentSerializer,
+    NomenclatureGroupTreeSerializer, NomenclatureTreeItemSerializer,
 )
 from apps.core.mixins import (
     OrgPerformCreateMixin, _tenant_filter, _resolve_org,
@@ -26,6 +29,24 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         if parent == '1':
             qs = qs.filter(parent__isnull=True)
         return qs.distinct()
+
+    @action(detail=False, methods=['get'])
+    def tree(self, request):
+        """
+        Полное дерево номенклатуры: группы (рекурсивно) + позиции в каждой группе.
+        Корневые позиции (без группы) возвращаются отдельно.
+        """
+        qs = NomenclatureGroup.objects.filter(parent__isnull=True).order_by('name')
+        qs = _tenant_filter(qs, request.user)
+        groups = NomenclatureGroupTreeSerializer(qs, many=True, context={'request': request}).data
+
+        root_items_qs = Nomenclature.objects.filter(
+            group__isnull=True, is_deleted=False,
+        ).order_by('name')
+        root_items_qs = _tenant_filter(root_items_qs, request.user)
+        root_items = NomenclatureTreeItemSerializer(root_items_qs, many=True).data
+
+        return Response({'groups': groups, 'root_items': root_items})
 
 
 @method_decorator(cache_page(60 * 60 * 24), name='dispatch') # Кеш на сутки, справочник общий

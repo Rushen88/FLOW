@@ -9,7 +9,7 @@ class BouquetComponentInline(admin.TabularInline):
 
 @admin.register(NomenclatureGroup)
 class NomenclatureGroupAdmin(admin.ModelAdmin):
-    list_display = ('name', 'parent', 'sort_order')
+    list_display = ('name', 'parent')
 
 
 @admin.register(MeasureUnit)

@@ -7,16 +7,41 @@ class NomenclatureGroupSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = NomenclatureGroup
-        fields = '__all__'
+        fields = ['id', 'organization', 'name', 'parent']
         read_only_fields = ['organization']
 
     def get_children(self, obj):
-        # Only include children for root-level groups (when fetched with ?root=1)
         request = self.context.get('request')
         if request and request.query_params.get('root') == '1':
             children = obj.children.all()
             return NomenclatureGroupSerializer(children, many=True, context=self.context).data
         return []
+
+
+class NomenclatureTreeItemSerializer(serializers.ModelSerializer):
+    """Лёгкий сериализатор номенклатуры для дерева."""
+    class Meta:
+        model = Nomenclature
+        fields = ['id', 'name', 'nomenclature_type', 'sku', 'retail_price',
+                  'purchase_price', 'is_active']
+
+
+class NomenclatureGroupTreeSerializer(serializers.ModelSerializer):
+    """Рекурсивный сериализатор дерева групп с вложенными позициями."""
+    children = serializers.SerializerMethodField()
+    items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NomenclatureGroup
+        fields = ['id', 'name', 'parent', 'children', 'items']
+
+    def get_children(self, obj):
+        children = obj.children.order_by('name')
+        return NomenclatureGroupTreeSerializer(children, many=True, context=self.context).data
+
+    def get_items(self, obj):
+        items = obj.nomenclatures.filter(is_deleted=False).order_by('name')
+        return NomenclatureTreeItemSerializer(items, many=True).data
 
 
 class MeasureUnitSerializer(serializers.ModelSerializer):

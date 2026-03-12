@@ -15,13 +15,12 @@ class NomenclatureGroup(models.Model):
         'self', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='children', verbose_name='Родительская группа',
     )
-    sort_order = models.PositiveIntegerField('Порядок', default=0)
 
     class Meta:
         db_table = 'nomenclature_groups'
         verbose_name = 'Группа номенклатуры'
         verbose_name_plural = 'Группы номенклатуры'
-        ordering = ['sort_order', 'name']
+        ordering = ['name']
 
     def __str__(self):
         return self.name
