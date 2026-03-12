@@ -1,16 +1,16 @@
 from celery import shared_task
-from django.utils import timezone
 from datetime import timedelta
+from django.utils import timezone
+
 from apps.inventory.models import Batch
-from apps.core.models import Warehouse
-from django.db.models import Sum
+
 
 @shared_task
 def check_expiring_batches():
-    \"\"\"
+    """
     Ежедневная проверка скоропортящихся партий.
     В цветочном бизнесе критично знать какие цветы портятся завтра/послезавтра, чтобы пустить их в распродажу (акции) или списание.
-    \"\"\"
+    """
     today = timezone.now().date()
     warning_date = today + timedelta(days=2)
     

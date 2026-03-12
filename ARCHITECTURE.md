@@ -665,6 +665,19 @@ npm run dev                       # → http://localhost:3000
 
 ---
 
+## Changelog (2026-03-12) — Hotfix: восстановление Celery worker и beat
+
+### Продакшен-инцидент
+- ✅ Выявлена причина постоянного рестарта `flow-celery-1` и `flow-celery-beat-1`: синтаксическая ошибка в [backend/apps/inventory/tasks.py](backend/apps/inventory/tasks.py)
+- ✅ Корневая причина: в docstring функции `check_expiring_batches()` были закоммичены экранированные кавычки `\"\"\"`, из-за чего Python падал на импорте модуля с `SyntaxError`
+
+### Исправление
+- ✅ Исправлен docstring в `check_expiring_batches()` на корректный Python-синтаксис
+- ✅ Удалены неиспользуемые импорты `Warehouse` и `Sum`
+- ✅ После hotfix Celery worker и Celery Beat должны запускаться штатно и снова выполнять фоновые задачи по контролю скоропортящихся партий
+
+---
+
 ## Changelog (2026-03-09) — Enterprise-аудит: 43 бэкенд + 30 фронтенд проблем
 
 ### P0 — Критические Runtime-ошибки
