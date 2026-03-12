@@ -37,7 +37,7 @@ services:
   
   celery:
     build: ./backend
-    command: celery -A config worker -l info
+    command: celery -A config worker -l info --concurrency=1
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
