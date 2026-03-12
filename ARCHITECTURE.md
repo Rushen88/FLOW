@@ -688,6 +688,12 @@ npm run dev                       # → http://localhost:3000
 ### Production verification
 - ✅ После деплоя подтверждена работоспособность: `/api/health/` отвечает `200 OK`, `/api/nomenclature/groups/tree/` отвечает корректным деревом, frontend собран и отдает новый bundle
 
+### Runtime hardening for 2 GB VPS
+- ✅ Backend-контейнер переведён на облегчённый профиль запуска: `gunicorn --workers 1 --threads 4 --worker-class gthread --timeout 180`
+- ✅ `collectstatic` и `migrate` вынесены из `CMD` контейнера в `deploy.py`, чтобы рестарты backend больше не тратили память и CPU на лишние стартовые операции
+- ✅ Celery worker переведён в более лёгкий режим: `--pool=solo --concurrency=1 --without-gossip --without-mingle --without-heartbeat`
+- ✅ Уровень логирования Celery/Celery Beat снижен до `warning` для уменьшения шума и накладных расходов на слабом VPS
+
 ---
 
 ## Changelog (2026-03-12) — Переработка блока «Номенклатура»: дерево, группы, UX
@@ -1428,7 +1434,7 @@ npm run dev                       # → http://localhost:3000
 - **PostgreSQL Connection Pooling:** В Django включен CONN_MAX_AGE=600, позволяющий переиспользовать открытые TCP-коннекты к БД вместо открытия и закрытия нового коннекта на каждый HTTP запрос. Это колоссально снижает CPU & Memory оверхед базы данных, подготавливая ее к 10k+ онлайну.
 - **Nginx API Resilience:** Добавлены увеличенные таймауты (proxy_read_timeout 300s) в секцию location /api/, предотвращающие падения 504 Gateway Timeout при выгрузке тяжелых исторических отчетов аналитики за несколько лет.
 - **DDoS/Bruteforce Защита:** В Django Rest Framework активирован встроенный Throttling Engine: 1000 запросов/минута для авторизованных пользователей и 30/мин для неавторизованных, защищающий систему от базовых brute-force атак на эндпоинты /api/auth/token/.
-- **Gunicorn Workers & Threads:** Контейнер работает в многопоточном режиме `--workers 2 --threads 2 --worker-class gthread`, что стабилизирует работу на VPS с 2 GB RAM и предотвращает OOM-kill при одновременной нагрузке backend + Celery.
+- **Gunicorn Workers & Threads:** Контейнер работает в профиле `--workers 1 --threads 4 --worker-class gthread`, а миграции и `collectstatic` выполняются на этапе деплоя. Это уменьшает пиковое потребление памяти и стабилизирует работу на co-hosted VPS с 2 GB RAM.
 - **Enterprise Security Headers:** В конфигурацию бэкенда вшиты строгие заголовки X_FRAME_OPTIONS = 'DENY' (защита от Clickjacking) и SECURE_CONTENT_TYPE_NOSNIFF, необходимые по стандартам безопасной разработки (OWASP).
 
 ## 16. Bugfix & Feature: Sales 500 Fix + Shift Report

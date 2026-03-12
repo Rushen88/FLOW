@@ -63,6 +63,8 @@ DB_PORT=5432
     run_command(ssh, 'cd /root/FLOW && docker compose up -d --build')
     print('Run migrations...')
     run_command(ssh, 'cd /root/FLOW && docker compose exec backend python manage.py migrate')
+    print('Collect static...')
+    run_command(ssh, 'cd /root/FLOW && docker compose exec backend python manage.py collectstatic --noinput')
     
     print("Deployment finished!")
     

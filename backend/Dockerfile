@@ -14,5 +14,5 @@ RUN pip install gunicorn
 
 COPY . .
 
-# Collect static files and run gunicorn
-CMD ["sh", "-c", "python manage.py collectstatic --noinput && python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --threads 2 --worker-class gthread --timeout 120 --graceful-timeout 60 --log-level info"]
+# Runtime is intentionally lean for a 2 GB VPS; migrations/static are handled by deploy.py.
+CMD ["sh", "-c", "gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 1 --threads 4 --worker-class gthread --timeout 180 --graceful-timeout 60 --log-level info"]
