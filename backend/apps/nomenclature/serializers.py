@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import NomenclatureGroup, MeasureUnit, Nomenclature, BouquetTemplate, BouquetComponent
+from apps.core.mixins import _resolve_org
 
 
 class NomenclatureGroupSerializer(serializers.ModelSerializer):
@@ -7,13 +8,31 @@ class NomenclatureGroupSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = NomenclatureGroup
-        fields = ['id', 'organization', 'name', 'parent']
+        fields = ['id', 'organization', 'name', 'parent', 'children']
         read_only_fields = ['organization']
+
+    def validate_parent(self, parent):
+        if not parent:
+            return parent
+
+        request = self.context.get('request')
+        org = _resolve_org(request.user) if request else None
+        if org and str(parent.organization_id) != str(org.id):
+            raise serializers.ValidationError('Родительская группа принадлежит другой организации.')
+
+        instance = getattr(self, 'instance', None)
+        cursor = parent
+        while instance and cursor:
+            if cursor.id == instance.id:
+                raise serializers.ValidationError('Нельзя вложить группу саму в себя или в её потомка.')
+            cursor = cursor.parent
+
+        return parent
 
     def get_children(self, obj):
         request = self.context.get('request')
         if request and request.query_params.get('root') == '1':
-            children = obj.children.all()
+            children = obj.children.order_by('name')
             return NomenclatureGroupSerializer(children, many=True, context=self.context).data
         return []
 
@@ -93,3 +112,11 @@ class NomenclatureListSerializer(serializers.ModelSerializer):
         model = Nomenclature
         fields = ['id', 'name', 'nomenclature_type', 'sku', 'retail_price',
                   'purchase_price', 'image', 'group_name', 'is_active']
+
+
+class NomenclatureOptionSerializer(serializers.ModelSerializer):
+    """Минимальный набор полей для select/autocomplete без тяжёлого detail payload."""
+
+    class Meta:
+        model = Nomenclature
+        fields = ['id', 'name', 'nomenclature_type', 'purchase_price', 'retail_price', 'is_active']

@@ -1,6 +1,6 @@
 from decimal import Decimal
 from django.db import transaction as db_transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 import datetime
 
@@ -160,6 +160,39 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             warehouse_id=warehouse_id,
         )
         return Response(result)
+
+    @action(detail=False, methods=['get'], url_path='low-stock')
+    def low_stock(self, request):
+        """
+        Лёгкий endpoint для дашборда: только позиции с низким остатком.
+        Возвращает уже отсортированный top-N без выгрузки всего склада.
+        """
+        try:
+            limit = int(request.query_params.get('limit', 5))
+        except (TypeError, ValueError):
+            limit = 5
+        limit = max(1, min(limit, 50))
+
+        qs = (
+            self.get_queryset()
+            .filter(
+                Q(quantity__lt=0)
+                | Q(nomenclature__min_stock__gt=0, quantity__lte=F('nomenclature__min_stock')),
+                nomenclature__is_active=True,
+            )
+            .order_by('quantity', 'nomenclature__name')[:limit]
+        )
+
+        return Response([
+            {
+                'id': str(sb.id),
+                'nomenclature_name': sb.nomenclature.name,
+                'quantity': float(sb.quantity),
+                'warehouse_name': sb.warehouse.name,
+                'min_stock': float(sb.nomenclature.min_stock),
+            }
+            for sb in qs
+        ])
 
     @action(detail=False, methods=['get'], url_path='negative-alerts')
     def negative_alerts(self, request):

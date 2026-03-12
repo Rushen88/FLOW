@@ -132,41 +132,60 @@ export default function DashboardPage() {
   const [lowStock, setLowStock] = useState<StockItem[]>([])
 
   useEffect(() => {
+    let cancelled = false
+
     const load = async () => {
-      try {
-        const [kpiRes, dailyRes, ordersRes, stockRes, walletsRes] = await Promise.all([
-          api.get('/analytics/daily-summary/dashboard/').catch(() => null),
-          api.get('/analytics/daily-summary/?ordering=-date').catch(() => null),
-          api.get('/sales/orders/?status=new').catch(() => null),
-          api.get('/inventory/stock/').catch(() => null),
-          api.get('/finance/wallets/summary/').catch(() => null),
-        ])
+      setLoading(true)
 
-        if (kpiRes) setKpi(kpiRes.data)
-        if (walletsRes) setWalletBalance(walletsRes.data?.total_balance ?? 0)
+      const results = await Promise.allSettled([
+        api.get('/analytics/daily-summary/dashboard/'),
+        api.get('/analytics/daily-summary/?ordering=-date'),
+        api.get('/sales/orders/?status=new'),
+        api.get('/inventory/stock/low-stock/?limit=5'),
+        api.get('/finance/wallets/summary/'),
+      ])
 
-        if (dailyRes) {
-          const dailyList: DailySummary[] = dailyRes.data.results || dailyRes.data
-          setDaily(dailyList.slice(0, 7).reverse())
-        }
+      if (cancelled) return
 
-        if (ordersRes) {
-          const ordersList: Order[] = ordersRes.data.results || ordersRes.data
-          setNewOrders(ordersList.slice(0, 5))
-        }
+      const [kpiRes, dailyRes, ordersRes, stockRes, walletsRes] = results
 
-        if (stockRes) {
-          const stockList: StockItem[] = stockRes.data.results || stockRes.data
-          const sorted = [...stockList].sort((a, b) => a.quantity - b.quantity)
-          setLowStock(sorted.slice(0, 5))
-        }
-      } catch {
-        notify('Ошибка загрузки данных дашборда', 'error')
-      } finally {
-        setLoading(false)
+      if (kpiRes.status === 'fulfilled') {
+        setKpi(kpiRes.value.data)
       }
+
+      if (walletsRes.status === 'fulfilled') {
+        setWalletBalance(walletsRes.value.data?.total_balance ?? 0)
+      }
+
+      if (dailyRes.status === 'fulfilled') {
+        const dailyList: DailySummary[] = dailyRes.value.data.results || dailyRes.value.data
+        setDaily(dailyList.slice(0, 7).reverse())
+      }
+
+      if (ordersRes.status === 'fulfilled') {
+        const ordersList: Order[] = ordersRes.value.data.results || ordersRes.value.data
+        setNewOrders(ordersList.slice(0, 5))
+      }
+
+      if (stockRes.status === 'fulfilled') {
+        const stockList: StockItem[] = stockRes.value.data.results || stockRes.value.data
+        setLowStock(stockList)
+      }
+
+      if (results.every(result => result.status === 'rejected')) {
+        notify('Ошибка загрузки данных дашборда', 'error')
+      } else if (results.some(result => result.status === 'rejected')) {
+        notify('Часть данных дашборда временно недоступна', 'warning')
+      }
+
+      setLoading(false)
     }
+
     load()
+
+    return () => {
+      cancelled = true
+    }
   }, [notify, user?.active_trading_point])
 
   const kpiCards = [

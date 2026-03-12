@@ -10,7 +10,7 @@ from .serializers import (
     NomenclatureGroupSerializer, MeasureUnitSerializer,
     NomenclatureSerializer, NomenclatureListSerializer,
     BouquetTemplateSerializer, BouquetComponentSerializer,
-    NomenclatureGroupTreeSerializer, NomenclatureTreeItemSerializer,
+    NomenclatureOptionSerializer,
 )
 from apps.core.mixins import (
     OrgPerformCreateMixin, _tenant_filter, _resolve_org,
@@ -36,17 +36,61 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         Полное дерево номенклатуры: группы (рекурсивно) + позиции в каждой группе.
         Корневые позиции (без группы) возвращаются отдельно.
         """
-        qs = NomenclatureGroup.objects.filter(parent__isnull=True).order_by('name')
-        qs = _tenant_filter(qs, request.user)
-        groups = NomenclatureGroupTreeSerializer(qs, many=True, context={'request': request}).data
+        group_rows = list(
+            _tenant_filter(NomenclatureGroup.objects.all(), request.user)
+            .order_by('name')
+            .values('id', 'name', 'parent_id')
+        )
+        item_rows = list(
+            _tenant_filter(
+                Nomenclature.objects.filter(is_deleted=False),
+                request.user,
+            )
+            .order_by('name')
+            .values(
+                'id', 'name', 'nomenclature_type', 'sku',
+                'retail_price', 'purchase_price', 'is_active', 'group_id',
+            )
+        )
 
-        root_items_qs = Nomenclature.objects.filter(
-            group__isnull=True, is_deleted=False,
-        ).order_by('name')
-        root_items_qs = _tenant_filter(root_items_qs, request.user)
-        root_items = NomenclatureTreeItemSerializer(root_items_qs, many=True).data
+        nodes = {
+            row['id']: {
+                'id': row['id'],
+                'name': row['name'],
+                'parent': row['parent_id'],
+                'children': [],
+                'items': [],
+            }
+            for row in group_rows
+        }
+        root_groups = []
+        root_items = []
 
-        return Response({'groups': groups, 'root_items': root_items})
+        for row in group_rows:
+            node = nodes[row['id']]
+            parent_id = row['parent_id']
+            if parent_id and parent_id in nodes:
+                nodes[parent_id]['children'].append(node)
+            else:
+                root_groups.append(node)
+
+        for row in item_rows:
+            payload = {
+                'id': row['id'],
+                'name': row['name'],
+                'nomenclature_type': row['nomenclature_type'],
+                'sku': row['sku'] or '',
+                'retail_price': str(row['retail_price'] or '0'),
+                'purchase_price': str(row['purchase_price'] or '0'),
+                'is_active': row['is_active'],
+            }
+            group_id = row['group_id']
+            if group_id and group_id in nodes:
+                nodes[group_id]['items'].append(payload)
+            else:
+                root_items.append(payload)
+
+        return Response({'groups': root_groups, 'root_items': root_items})
 
 
 @method_decorator(cache_page(60 * 60 * 24), name='dispatch') # Кеш на сутки, справочник общий
@@ -82,6 +126,12 @@ class NomenclatureViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Nomenclature.objects.select_related('group', 'unit')
         return _tenant_filter(qs, self.request.user)
+
+    @action(detail=False, methods=['get'], pagination_class=None, url_path='options')
+    def options(self, request):
+        qs = self.get_queryset().filter(is_deleted=False).order_by('name')
+        serializer = NomenclatureOptionSerializer(qs, many=True)
+        return Response(serializer.data)
 
 
 class BouquetTemplateViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):

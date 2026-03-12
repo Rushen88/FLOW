@@ -6,7 +6,7 @@ import {
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
 import {
-  Add, Edit, Delete, Inventory, Category, Straighten, AutoAwesome,
+  Add, Edit, Delete, Inventory, Straighten, AutoAwesome,
   AddCircleOutline, RemoveCircleOutline, FolderOpen, Folder,
   ExpandMore, ChevronRight, CreateNewFolder, Search,
 } from '@mui/icons-material'
@@ -22,11 +22,15 @@ interface NomItem {
   id: string; organization: string; group: string | null; name: string; nomenclature_type: string
   sku: string; barcode: string; unit: string | null; purchase_price: string; retail_price: string
   min_price: string; markup_percent: string; image: string | null; color: string; country: string
-  stem_length: number | null; diameter: number | null; shelf_life_days: number | null
+  stem_length: number | null; diameter: number | null; default_shelf_life_days: number | null
   min_stock: number | null; is_active: boolean; notes: string; group_name: string; unit_name: string
 }
 interface NomGroup { id: string; organization: string; name: string; parent: string | null; children?: NomGroup[] }
 interface MeasureUnit { id: string; name: string; short_name: string }
+interface NomOption {
+  id: string; name: string; nomenclature_type: string
+  purchase_price: string; retail_price: string; is_active: boolean
+}
 interface BouquetComponent {
   id: string; template: string; nomenclature: string; quantity: string
   is_required: boolean; substitute: string | null; nomenclature_name: string
@@ -70,7 +74,7 @@ const defaultItemForm = () => ({
   name: '', nomenclature_type: 'single_flower', group: '' as string, sku: '', barcode: '',
   unit: '' as string, purchase_price: '', retail_price: '', min_price: '', markup_percent: '',
   color: '', country: '', stem_length: '' as string | number, diameter: '' as string | number,
-  shelf_life_days: '' as string | number, min_stock: '' as string | number, is_active: true, notes: '',
+  default_shelf_life_days: '' as string | number, min_stock: '' as string | number, is_active: true, notes: '',
 })
 
 // ═══════════════════════════════════════════════════════════
@@ -192,7 +196,7 @@ export default function NomenclaturePage() {
   const [treeSearch, setTreeSearch] = useState('')
 
   // ─── All items (for forms / bouquet templates) ───
-  const [items, setItems] = useState<NomItem[]>([])
+  const [items, setItems] = useState<NomOption[]>([])
 
   // ─── Item dialog ───
   const [itemDlg, setItemDlg] = useState(false)
@@ -202,9 +206,6 @@ export default function NomenclaturePage() {
   const [delItemId, setDelItemId] = useState<string | null>(null)
   const [delItemName, setDelItemName] = useState('')
 
-  // ─── Groups ───
-  const [groups, setGroups] = useState<NomGroup[]>([])
-  const [grpLoad, setGrpLoad] = useState(false)
   const [grpDlg, setGrpDlg] = useState(false)
   const [editGrp, setEditGrp] = useState<NomGroup | null>(null)
   const [grpForm, setGrpForm] = useState({ name: '', parent: '' as string })
@@ -240,18 +241,10 @@ export default function NomenclaturePage() {
   }, [notify])
 
   const fetchItems = useCallback(() => {
-    api.get('/nomenclature/items/')
-      .then(res => setItems(res.data.results || res.data || []))
+    api.get('/nomenclature/items/options/')
+      .then(res => setItems(res.data || []))
       .catch(() => {})
   }, [])
-
-  const fetchGroups = useCallback(() => {
-    setGrpLoad(true)
-    api.get('/nomenclature/groups/')
-      .then(res => setGroups(res.data.results || res.data || []))
-      .catch(() => notify('Ошибка загрузки групп', 'error'))
-      .finally(() => setGrpLoad(false))
-  }, [notify])
 
   const fetchUnits = useCallback(() => {
     setUnitLoad(true)
@@ -269,24 +262,41 @@ export default function NomenclaturePage() {
       .finally(() => setTplLoad(false))
   }, [notify])
 
-  useEffect(() => { fetchTree(); fetchItems(); fetchGroups(); fetchUnits() }, [fetchTree, fetchItems, fetchGroups, fetchUnits])
-  useEffect(() => { if (tab === 1) fetchGroups() }, [tab, fetchGroups])
-  useEffect(() => { if (tab === 2) fetchUnits() }, [tab, fetchUnits])
-  useEffect(() => { if (tab === 3) { fetchTemplates(); fetchItems() } }, [tab, fetchTemplates, fetchItems])
+  useEffect(() => { fetchTree() }, [fetchTree])
+  useEffect(() => {
+    if ((itemDlg || tab === 1) && units.length === 0 && !unitLoad) {
+      fetchUnits()
+    }
+  }, [itemDlg, tab, units.length, unitLoad, fetchUnits])
+  useEffect(() => {
+    if (tab === 2) {
+      fetchTemplates()
+      fetchItems()
+    }
+  }, [tab, fetchTemplates, fetchItems])
 
   // ─── Flatten groups for selects ───
   const flatGroups = useMemo(() => {
     const result: NomGroup[] = []
     const seen = new Set<string>()
-    const flatten = (list: NomGroup[]) => {
+    const flatten = (list: TreeGroup[]) => {
       list.forEach(g => {
-        if (!seen.has(g.id)) { seen.add(g.id); result.push(g) }
+        if (!seen.has(g.id)) {
+          seen.add(g.id)
+          result.push({ id: g.id, organization: '', name: g.name, parent: g.parent })
+        }
         if (g.children?.length) flatten(g.children)
       })
     }
-    flatten(groups)
+    if (treeData?.groups) flatten(treeData.groups)
     return result
-  }, [groups])
+  }, [treeData])
+
+  useEffect(() => {
+    if (selectedGroupId && !flatGroups.some(group => group.id === selectedGroupId)) {
+      setSelectedGroupId(null)
+    }
+  }, [selectedGroupId, flatGroups])
 
   // ─── Filter tree by search term ───
   const filteredTree = useMemo((): TreeData | null => {
@@ -336,6 +346,10 @@ export default function NomenclaturePage() {
 
   // ─── Item CRUD ───
   const openItemDlg = (item?: NomItem) => {
+    if (units.length === 0 && !unitLoad) {
+      fetchUnits()
+    }
+
     if (item) {
       setEditItem(item)
       setItemForm({
@@ -345,7 +359,7 @@ export default function NomenclaturePage() {
         retail_price: item.retail_price || '', min_price: item.min_price || '',
         markup_percent: item.markup_percent || '', color: item.color || '',
         stem_length: item.stem_length ?? '', diameter: item.diameter ?? '',
-        country: item.country || '', shelf_life_days: item.shelf_life_days ?? '',
+        country: item.country || '', default_shelf_life_days: item.default_shelf_life_days ?? '',
         min_stock: item.min_stock ?? '', is_active: item.is_active, notes: item.notes || '',
       })
     } else {
@@ -371,7 +385,9 @@ export default function NomenclaturePage() {
       const d: Record<string, any> = { ...itemForm }
       if (!d.group) d.group = null
       if (!d.unit) d.unit = null
-      if (d.shelf_life_days === '') d.shelf_life_days = null
+      if (d.stem_length === '') d.stem_length = null
+      if (d.diameter === '') d.diameter = null
+      if (d.default_shelf_life_days === '') d.default_shelf_life_days = null
       if (d.min_stock === '' || d.min_stock === null) d.min_stock = 0
       if (!d.purchase_price && d.purchase_price !== 0) d.purchase_price = '0.00'
       if (!d.retail_price && d.retail_price !== 0) d.retail_price = '0.00'
@@ -403,6 +419,14 @@ export default function NomenclaturePage() {
   }
 
   const openGrpDlgById = async (id: string) => {
+    const localGroup = flatGroups.find(group => group.id === id)
+    if (localGroup) {
+      setEditGrp(localGroup)
+      setGrpForm({ name: localGroup.name, parent: localGroup.parent || '' })
+      setGrpDlg(true)
+      return
+    }
+
     try {
       const res = await api.get(`/nomenclature/groups/${id}/`)
       const g = res.data
@@ -419,7 +443,7 @@ export default function NomenclaturePage() {
       if (!d.parent) d.parent = null
       if (editGrp) { await api.patch(`/nomenclature/groups/${editGrp.id}/`, d); notify('Группа обновлена') }
       else { await api.post('/nomenclature/groups/', d); notify('Группа создана') }
-      setGrpDlg(false); fetchGroups(); fetchTree()
+      setGrpDlg(false); fetchTree()
     } catch (err) { notify(extractError(err, 'Ошибка сохранения группы'), 'error') }
     setGrpSaving(false)
   }
@@ -432,7 +456,7 @@ export default function NomenclaturePage() {
 
   const removeGrp = async () => {
     if (!delGrp) return
-    try { await api.delete(`/nomenclature/groups/${delGrp.id}/`); notify('Группа удалена'); setDelGrp(null); fetchGroups(); fetchTree() }
+    try { await api.delete(`/nomenclature/groups/${delGrp.id}/`); notify('Группа удалена'); setDelGrp(null); fetchTree() }
     catch (err) { notify(extractError(err, 'Ошибка удаления группы'), 'error') }
   }
 
@@ -464,6 +488,10 @@ export default function NomenclaturePage() {
   const componentItems = items.filter(i => i.nomenclature_type !== 'bouquet' && i.nomenclature_type !== 'composition')
 
   const openTplDlg = (tpl?: BouquetTemplate) => {
+    if (items.length === 0) {
+      fetchItems()
+    }
+
     if (tpl) {
       setEditTpl(tpl)
       setTplForm({
@@ -553,11 +581,6 @@ export default function NomenclaturePage() {
 
   const tplDisplayName = (tpl: BouquetTemplate) => tpl.bouquet_name || items.find(i => i.id === tpl.nomenclature)?.name || '—'
 
-  const parentName = (id: string | null) => {
-    if (!id) return '—'
-    return flatGroups.find(x => x.id === id)?.name || '—'
-  }
-
   // Count total items in tree
   const totalCount = useMemo(() => {
     if (!treeData) return 0
@@ -574,7 +597,6 @@ export default function NomenclaturePage() {
         <CardContent sx={{ pb: '16px !important' }}>
           <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
             <Tab icon={<Inventory />} iconPosition="start" label="Номенклатура" />
-            <Tab icon={<Category />} iconPosition="start" label="Группы" />
             <Tab icon={<Straighten />} iconPosition="start" label="Единицы измерения" />
             <Tab icon={<AutoAwesome />} iconPosition="start" label="Шаблоны букетов" />
           </Tabs>
@@ -663,24 +685,8 @@ export default function NomenclaturePage() {
             </Box>
           )}
 
-          {/* ══ Tab 1: Groups ══ */}
+          {/* ══ Tab 1: Measure Units ══ */}
           {tab === 1 && (
-            <DataTable
-              columns={[
-                { key: 'name', label: 'Название', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
-                { key: 'parent', label: 'Родительская группа', render: (v: string | null) => parentName(v) },
-                { key: '_act', label: '', align: 'center', width: 100, render: (_: any, row: NomGroup) => (<>
-                  <IconButton size="small" onClick={() => openGrpDlg(row)}><Edit fontSize="small" /></IconButton>
-                  <IconButton size="small" onClick={() => setDelGrp(row)}><Delete fontSize="small" /></IconButton>
-                </>) },
-              ]}
-              rows={flatGroups} loading={grpLoad} emptyText="Нет групп номенклатуры"
-              headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openGrpDlg()}>Добавить группу</Button>}
-            />
-          )}
-
-          {/* ══ Tab 2: Measure Units ══ */}
-          {tab === 2 && (
             <DataTable
               columns={[
                 { key: 'name', label: 'Название', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
@@ -695,8 +701,8 @@ export default function NomenclaturePage() {
             />
           )}
 
-          {/* ══ Tab 3: Bouquet Templates ══ */}
-          {tab === 3 && (
+          {/* ══ Tab 2: Bouquet Templates ══ */}
+          {tab === 2 && (
             <DataTable
               columns={[
                 { key: 'bouquet_name', label: 'Букет', render: (_: any, row: BouquetTemplate) => <Typography fontWeight={500}>{tplDisplayName(row)}</Typography> },
@@ -784,8 +790,16 @@ export default function NomenclaturePage() {
               onChange={e => setItemForm({ ...itemForm, country: e.target.value })} />
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
-            <TextField label="Срок годности (дни)" type="number" fullWidth value={itemForm.shelf_life_days}
-              onChange={e => setItemForm({ ...itemForm, shelf_life_days: e.target.value ? Number(e.target.value) : '' })} />
+            <TextField label="Ростовка / длина, см" type="number" fullWidth value={itemForm.stem_length}
+              onChange={e => setItemForm({ ...itemForm, stem_length: e.target.value ? Number(e.target.value) : '' })} />
+          </Grid>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <TextField label="Диаметр, см" type="number" fullWidth value={itemForm.diameter}
+              onChange={e => setItemForm({ ...itemForm, diameter: e.target.value ? Number(e.target.value) : '' })} />
+          </Grid>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <TextField label="Срок годности по умолчанию (дни)" type="number" fullWidth value={itemForm.default_shelf_life_days}
+              onChange={e => setItemForm({ ...itemForm, default_shelf_life_days: e.target.value ? Number(e.target.value) : '' })} />
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
             <TextField label="Мин. остаток" type="number" fullWidth value={itemForm.min_stock}
