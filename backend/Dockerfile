@@ -15,4 +15,4 @@ RUN pip install gunicorn
 COPY . .
 
 # Runtime is intentionally lean for a 2 GB VPS; migrations/static are handled by deploy.py.
-CMD ["sh", "-c", "gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 1 --threads 4 --worker-class gthread --timeout 180 --graceful-timeout 60 --log-level info"]
+CMD ["sh", "-c", "gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 180 --graceful-timeout 60 --log-level info"]
