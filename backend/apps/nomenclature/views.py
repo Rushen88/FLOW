@@ -5,12 +5,12 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import NomenclatureGroup, MeasureUnit, Nomenclature, BouquetTemplate, BouquetComponent
+from .models import NomenclatureGroup, MeasureUnit, Nomenclature, BouquetTemplate, BouquetComponent, PurchasePriceHistory
 from .serializers import (
     NomenclatureGroupSerializer, MeasureUnitSerializer,
     NomenclatureSerializer, NomenclatureListSerializer,
     BouquetTemplateSerializer, BouquetComponentSerializer,
-    NomenclatureOptionSerializer,
+    NomenclatureOptionSerializer, PurchasePriceHistorySerializer,
 )
 from apps.core.mixins import (
     OrgPerformCreateMixin, _tenant_filter, _resolve_org,
@@ -48,7 +48,7 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             )
             .order_by('name')
             .values(
-                'id', 'name', 'nomenclature_type', 'sku',
+                'id', 'name', 'nomenclature_type', 'accounting_type', 'sku',
                 'retail_price', 'purchase_price', 'is_active', 'group_id',
             )
         )
@@ -79,6 +79,7 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 'id': row['id'],
                 'name': row['name'],
                 'nomenclature_type': row['nomenclature_type'],
+                'accounting_type': row['accounting_type'] or '',
                 'sku': row['sku'] or '',
                 'retail_price': str(row['retail_price'] or '0'),
                 'purchase_price': str(row['purchase_price'] or '0'),
@@ -91,6 +92,13 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 root_items.append(payload)
 
         return Response({'groups': root_groups, 'root_items': root_items})
+
+    @action(detail=True, methods=['get'], url_path='delete-info')
+    def delete_info(self, request, pk=None):
+        """Возвращает кол-во потомков для подтверждения каскадного удаления."""
+        group = self.get_object()
+        counts = group.get_descendant_count()
+        return Response(counts)
 
 
 @method_decorator(cache_page(60 * 60 * 24), name='dispatch') # Кеш на сутки, справочник общий
@@ -132,6 +140,24 @@ class NomenclatureViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         qs = self.get_queryset().filter(is_deleted=False).order_by('name')
         serializer = NomenclatureOptionSerializer(qs, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='price-history')
+    def price_history(self, request, pk=None):
+        """История закупочных цен для позиции."""
+        nom = self.get_object()
+        qs = PurchasePriceHistory.objects.filter(nomenclature=nom).order_by('-created_at')[:50]
+        return Response(PurchasePriceHistorySerializer(qs, many=True).data)
+
+    @action(detail=True, methods=['patch'], url_path='update-price')
+    def update_price(self, request, pk=None):
+        """Inline-обновление розничной цены."""
+        nom = self.get_object()
+        retail = request.data.get('retail_price')
+        if retail is not None:
+            from decimal import Decimal
+            nom.retail_price = Decimal(str(retail))
+            nom.save(update_fields=['retail_price'])
+        return Response({'id': str(nom.id), 'retail_price': str(nom.retail_price)})
 
 
 class BouquetTemplateViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):

@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     'apps.marketing',
     'apps.delivery',
     'apps.analytics',
+    'apps.cashier',
 ]
 
 # --------------- MIDDLEWARE ---------------

@@ -12,7 +12,7 @@ import {
   LocalShipping, AttachMoney, Campaign, BarChart, Settings,
   Logout, Menu as MenuIcon, LocalFlorist, Store,
   Group, ChevronLeft, AdminPanelSettings, Person,
-  SwapHoriz,
+  SwapHoriz, PointOfSale,
 } from '@mui/icons-material'
 import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
@@ -34,6 +34,7 @@ const navItems: NavItem[] = [
   { label: 'Дашборд', path: '/', icon: <Dashboard /> },
   { label: 'Номенклатура', path: '/nomenclature', icon: <LocalFlorist /> },
   { label: 'Склад', path: '/inventory', icon: <Inventory />, allowedRoles: ['owner', 'admin', 'manager', 'florist'] },
+  { label: 'Касса', path: '/cashier', icon: <PointOfSale />, allowedRoles: ['owner', 'admin', 'manager', 'seller'] },
   { label: 'Продажи', path: '/sales', icon: <ShoppingCart /> },
   { label: 'Заказы', path: '/orders', icon: <Assignment /> },
   { label: 'Клиенты', path: '/customers', icon: <People />, allowedRoles: ['owner', 'admin', 'manager', 'seller'] },

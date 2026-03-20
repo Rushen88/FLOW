@@ -240,6 +240,14 @@ def process_batch_receipt(
         nomenclature.purchase_price = purchase_price
     nomenclature.save(update_fields=['purchase_price'])
 
+    # Создаём запись истории закупочных цен
+    from apps.nomenclature.models import PurchasePriceHistory
+    PurchasePriceHistory.objects.create(
+        nomenclature=nomenclature,
+        purchase_price=purchase_price,
+        source=f'Приход: {invoice_number}' if invoice_number else 'Приход партии',
+    )
+
     # Обновляем цену у поставщика (если указан)
     if supplier:
         from apps.suppliers.models import SupplierNomenclature
@@ -430,6 +438,22 @@ def assemble_bouquet(
     # Обновить себестоимость букета в номенклатуре
     nomenclature_bouquet.purchase_price = cost_per_unit
     nomenclature_bouquet.save(update_fields=['purchase_price'])
+
+    # Создать снимок состава партии букета
+    from .models import BouquetBatchComponentSnapshot
+    for idx, comp in enumerate(components):
+        comp_nom = comp['nomenclature']
+        if comp_nom.nomenclature_type == 'service':
+            continue
+        BouquetBatchComponentSnapshot.objects.create(
+            batch=batch,
+            nomenclature=comp_nom,
+            accounting_type=getattr(comp_nom, 'accounting_type', 'stock_material'),
+            quantity_per_unit=Decimal(str(comp['quantity'])),
+            price_per_unit=comp_nom.purchase_price,
+            sort_order=idx,
+            source_mode='template',
+        )
 
     return batch
 
@@ -814,3 +838,58 @@ def correct_bouquet_stock(
     _update_stock_balance(organization, warehouse, bouquet_nomenclature, Decimal('1'))
 
     return corrected_batch
+
+
+@transaction.atomic
+def process_receipt_document(document, user=None):
+    """
+    Провести документ приёмки: для каждой позиции ReceiptDocumentItem
+    вызываем process_batch_receipt, привязываем batch к позиции.
+    """
+    from .models import ReceiptDocumentItem
+    items = ReceiptDocumentItem.objects.filter(document=document).select_related(
+        'nomenclature', 'warehouse',
+    )
+    total = Decimal('0')
+    for item in items:
+        batch = process_batch_receipt(
+            organization=document.organization,
+            warehouse=item.warehouse,
+            nomenclature=item.nomenclature,
+            supplier=document.supplier,
+            quantity=item.quantity,
+            purchase_price=item.purchase_price,
+            arrival_date=document.date,
+            invoice_number=document.number,
+            user=user,
+            create_debt=False,
+        )
+        batch.receipt_document = document
+        batch.save(update_fields=['receipt_document'])
+        item.batch = batch
+        item.total = item.quantity * item.purchase_price
+        item.save(update_fields=['batch', 'total'])
+        total += item.total
+
+        # Update retail price on nomenclature if provided
+        if item.retail_price and item.retail_price > 0:
+            item.nomenclature.retail_price = item.retail_price
+            item.nomenclature.save(update_fields=['retail_price'])
+
+    document.total_cost = total
+    document.save(update_fields=['total_cost'])
+
+    # Create single supplier debt for the whole document
+    if document.supplier and total > 0:
+        from apps.finance.models import Debt
+        Debt.objects.create(
+            organization=document.organization,
+            debt_type=Debt.DebtType.SUPPLIER,
+            direction=Debt.Direction.WE_OWE,
+            counterparty_name=document.supplier.name,
+            supplier=document.supplier,
+            amount=total,
+            notes=f'Документ приёмки №{document.number}',
+        )
+
+    return document

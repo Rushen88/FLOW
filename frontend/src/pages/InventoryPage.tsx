@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Typography, Tab, Tabs, Card, CardContent, Chip,
   TextField, MenuItem, IconButton, Button, Dialog, DialogTitle, DialogContent, DialogActions,
-  ToggleButtonGroup, ToggleButton,
+  ToggleButtonGroup, ToggleButton, Tooltip,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
-import { Add, Edit, Delete, Inventory2, LocalShipping, SwapHoriz, RemoveCircleOutline, AutoAwesome, CallSplit, AutoFixHigh, ListAlt, Tune } from '@mui/icons-material'
+import { Add, Edit, Delete, Inventory2, LocalShipping, SwapHoriz, RemoveCircleOutline, AutoAwesome, CallSplit, AutoFixHigh, ListAlt, Tune, Description, PlayArrow } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import api from '../api'
 import { useAuth } from '../contexts/AuthContext'
@@ -276,6 +276,63 @@ export default function InventoryPage() {
   const [writeOffForm, setWriteOffForm] = useState({ warehouse: '', nomenclature: '', quantity: '1', reason: 'expired', notes: '' })
   const [writeOffSaving, setWriteOffSaving] = useState(false)
 
+  // ═══════════════════════════════════════════
+  // Tab 3 — Документы приёмки
+  // ═══════════════════════════════════════════
+  interface ReceiptDoc {
+    id: string; number: string; date: string; supplier: string | null; supplier_name: string
+    comment: string; total_cost: string; items: any[]
+  }
+  const [rDocs, setRDocs] = useState<ReceiptDoc[]>([])
+  const [rDocLoad, setRDocLoad] = useState(false)
+  const [rDocDlg, setRDocDlg] = useState(false)
+  const [rDocForm, setRDocForm] = useState({ number: '', date: new Date().toISOString().slice(0, 10), supplier: '', comment: '' })
+  const [rDocItems, setRDocItems] = useState<{ nomenclature: string; warehouse: string; quantity: string; purchase_price: string; retail_price: string }[]>([])
+  const [rDocSaving, setRDocSaving] = useState(false)
+
+  const fetchRDocs = useCallback(() => {
+    setRDocLoad(true)
+    api.get('/inventory/receipt-documents/')
+      .then(res => setRDocs(res.data.results || res.data || []))
+      .catch(() => { setRDocs([]); notify('Ошибка загрузки документов приёмки', 'error') })
+      .finally(() => setRDocLoad(false))
+  }, [notify])
+
+  useEffect(() => { if (tab === 3) fetchRDocs() }, [tab, fetchRDocs])
+
+  const openRDocDlg = () => {
+    const defaultWh = scopedWarehouses.length === 1 ? scopedWarehouses[0].id : ''
+    setRDocForm({ number: '', date: new Date().toISOString().slice(0, 10), supplier: '', comment: '' })
+    setRDocItems([{ nomenclature: '', warehouse: defaultWh, quantity: '1', purchase_price: '', retail_price: '' }])
+    setRDocDlg(true)
+  }
+
+  const saveRDoc = async () => {
+    setRDocSaving(true)
+    try {
+      const validItems = rDocItems.filter(i => i.nomenclature && parseFloat(i.quantity) > 0)
+      if (!validItems.length) { notify('Добавьте хотя бы одну позицию', 'error'); setRDocSaving(false); return }
+      const payload = {
+        ...rDocForm,
+        supplier: rDocForm.supplier || null,
+        items: validItems,
+      }
+      const res = await api.post('/inventory/receipt-documents/', payload)
+      // Auto-process the document
+      await api.post(`/inventory/receipt-documents/${res.data.id}/process/`)
+      notify('Документ приёмки проведён')
+      setRDocDlg(false); fetchRDocs(); fetchBatches(); fetchStock(); fetchHelpers()
+    } catch (err) { notify(extractError(err, 'Ошибка сохранения документа'), 'error') }
+    setRDocSaving(false)
+  }
+
+  const processRDoc = async (docId: string) => {
+    try {
+      await api.post(`/inventory/receipt-documents/${docId}/process/`)
+      notify('Документ проведён'); fetchRDocs(); fetchBatches(); fetchStock(); fetchHelpers()
+    } catch (err) { notify(extractError(err, 'Ошибка проведения'), 'error') }
+  }
+
 
   const bouquetNoms = allNom.filter(n => n.nomenclature_type === 'bouquet' || n.nomenclature_type === 'composition')
 
@@ -508,6 +565,7 @@ export default function InventoryPage() {
             <Tab icon={<Inventory2 />} iconPosition="start" label="Остатки" />
             <Tab icon={<LocalShipping />} iconPosition="start" label="Поступления" />
             <Tab icon={<SwapHoriz />} iconPosition="start" label="Движения" />
+            <Tab icon={<Description />} iconPosition="start" label="Документы приёмки" />
           </Tabs>
 
           {/* ── Tab 0: Остатки ── */}
@@ -656,10 +714,31 @@ export default function InventoryPage() {
               headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openMDlg()}>Добавить движение</Button>}
             />
           )}
+
+          {/* ── Tab 3: Документы приёмки ── */}
+          {tab === 3 && (
+            <>
+              <DataTable
+                columns={[
+                  { key: 'number', label: '№ документа', render: (v: string) => <Typography fontWeight={500}>{v || '—'}</Typography> },
+                  { key: 'date', label: 'Дата', render: (v: string) => fmtDate(v) },
+                  { key: 'supplier_name', label: 'Поставщик', render: (v: string) => v || '—' },
+                  { key: 'total_cost', label: 'Сумма', align: 'right', render: (v: string) => v ? `${fmtNum(v)} ₽` : '—' },
+                  { key: 'items', label: 'Позиций', align: 'center', render: (v: any[]) => v?.length || 0 },
+                  { key: 'comment', label: 'Комментарий', render: (v: string) => v || '' },
+                  { key: '_act', label: '', align: 'center', width: 80, render: (_: any, row: ReceiptDoc) => (
+                    <Tooltip title="Провести повторно">
+                      <IconButton size="small" onClick={() => processRDoc(row.id)}><PlayArrow fontSize="small" /></IconButton>
+                    </Tooltip>
+                  ) },
+                ]}
+                rows={rDocs} loading={rDocLoad} emptyText="Документов приёмки нет"
+                headerActions={<Button variant="contained" startIcon={<Add />} onClick={openRDocDlg}>Новый документ приёмки</Button>}
+              />
+            </>
+          )}
         </CardContent>
       </Card>
-
-      {/* ── Batch Dialog ── */}
       <EntityFormDialog open={bDlg} onClose={() => setBDlg(false)} onSubmit={saveB}
         title={editB ? 'Редактировать поступление' : 'Новая партия'} submitText={editB ? 'Сохранить' : 'Создать'}
         disabled={!bForm.nomenclature || !bForm.warehouse || !bForm.purchase_price || !bForm.quantity}>
@@ -1182,6 +1261,71 @@ export default function InventoryPage() {
         <TextField label="Примечания" fullWidth multiline rows={2} value={writeOffForm.notes}
           onChange={e => setWriteOffForm({...writeOffForm, notes: e.target.value})} />
       </EntityFormDialog>
+
+      {/* ── Receipt Document Dialog ── */}
+      <Dialog open={rDocDlg} onClose={() => setRDocDlg(false)} fullWidth maxWidth="md">
+        <DialogTitle>Новый документ приёмки</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '8px !important' }}>
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <TextField label="Номер" fullWidth value={rDocForm.number}
+              onChange={e => setRDocForm({ ...rDocForm, number: e.target.value })} />
+            <TextField label="Дата" type="date" fullWidth value={rDocForm.date}
+              InputLabelProps={{ shrink: true }}
+              onChange={e => setRDocForm({ ...rDocForm, date: e.target.value })} />
+          </Box>
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <TextField label="Поставщик" select fullWidth value={rDocForm.supplier}
+              onChange={e => setRDocForm({ ...rDocForm, supplier: e.target.value })}>
+              <MenuItem value="">— не указан —</MenuItem>
+              {suppliers.map(s => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
+            </TextField>
+            <TextField label="Комментарий" fullWidth value={rDocForm.comment}
+              onChange={e => setRDocForm({ ...rDocForm, comment: e.target.value })} />
+          </Box>
+
+          <Typography variant="subtitle2" sx={{ mt: 1 }}>Позиции</Typography>
+          {rDocItems.map((item, idx) => (
+            <Box key={idx} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <TextField label="Номенклатура" select sx={{ flex: 2 }} value={item.nomenclature}
+                onChange={e => {
+                  const upd = [...rDocItems]; upd[idx] = { ...upd[idx], nomenclature: e.target.value }
+                  const nom = allNom.find(n => n.id === e.target.value)
+                  if (nom) { upd[idx].purchase_price = nom.purchase_price || ''; upd[idx].retail_price = nom.retail_price || '' }
+                  setRDocItems(upd)
+                }}>
+                {allNom.filter(n => n.nomenclature_type !== 'service').map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
+              </TextField>
+              <TextField label="Склад" select sx={{ flex: 1 }} value={item.warehouse}
+                onChange={e => { const upd = [...rDocItems]; upd[idx] = { ...upd[idx], warehouse: e.target.value }; setRDocItems(upd) }}>
+                {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
+              </TextField>
+              <TextField label="Кол-во" type="number" sx={{ width: 90 }} value={item.quantity}
+                inputProps={{ min: 1 }}
+                onChange={e => { const upd = [...rDocItems]; upd[idx] = { ...upd[idx], quantity: e.target.value }; setRDocItems(upd) }} />
+              <TextField label="Закуп. ₽" type="number" sx={{ width: 110 }} value={item.purchase_price}
+                onChange={e => { const upd = [...rDocItems]; upd[idx] = { ...upd[idx], purchase_price: e.target.value }; setRDocItems(upd) }} />
+              <TextField label="Розн. ₽" type="number" sx={{ width: 110 }} value={item.retail_price}
+                onChange={e => { const upd = [...rDocItems]; upd[idx] = { ...upd[idx], retail_price: e.target.value }; setRDocItems(upd) }} />
+              <IconButton size="small" color="error"
+                onClick={() => { const upd = rDocItems.filter((_, i) => i !== idx); setRDocItems(upd.length ? upd : [{ nomenclature: '', warehouse: '', quantity: '1', purchase_price: '', retail_price: '' }]) }}>
+                <Delete fontSize="small" />
+              </IconButton>
+            </Box>
+          ))}
+          <Button size="small" startIcon={<Add />} onClick={() => {
+            const defaultWh = scopedWarehouses.length === 1 ? scopedWarehouses[0].id : ''
+            setRDocItems([...rDocItems, { nomenclature: '', warehouse: defaultWh, quantity: '1', purchase_price: '', retail_price: '' }])
+          }}>
+            Добавить позицию
+          </Button>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRDocDlg(false)}>Отмена</Button>
+          <Button variant="contained" onClick={saveRDoc} disabled={rDocSaving}>
+            {rDocSaving ? 'Сохранение...' : 'Создать и провести'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

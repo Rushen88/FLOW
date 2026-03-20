@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import NomenclatureGroup, MeasureUnit, Nomenclature, BouquetTemplate, BouquetComponent
+from .models import NomenclatureGroup, MeasureUnit, Nomenclature, BouquetTemplate, BouquetComponent, PurchasePriceHistory
 from apps.core.mixins import _resolve_org
 
 
@@ -41,7 +41,7 @@ class NomenclatureTreeItemSerializer(serializers.ModelSerializer):
     """Лёгкий сериализатор номенклатуры для дерева."""
     class Meta:
         model = Nomenclature
-        fields = ['id', 'name', 'nomenclature_type', 'sku', 'retail_price',
+        fields = ['id', 'name', 'nomenclature_type', 'accounting_type', 'sku', 'retail_price',
                   'purchase_price', 'is_active']
 
 
@@ -110,7 +110,7 @@ class NomenclatureListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Nomenclature
-        fields = ['id', 'name', 'nomenclature_type', 'sku', 'retail_price',
+        fields = ['id', 'name', 'nomenclature_type', 'accounting_type', 'sku', 'retail_price',
                   'purchase_price', 'image', 'group_name', 'is_active']
 
 
@@ -119,4 +119,11 @@ class NomenclatureOptionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Nomenclature
-        fields = ['id', 'name', 'nomenclature_type', 'purchase_price', 'retail_price', 'is_active']
+        fields = ['id', 'name', 'nomenclature_type', 'accounting_type', 'purchase_price', 'retail_price', 'is_active']
+
+
+class PurchasePriceHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PurchasePriceHistory
+        fields = ['id', 'nomenclature', 'purchase_price', 'source', 'created_at']
+        read_only_fields = ['id', 'created_at']

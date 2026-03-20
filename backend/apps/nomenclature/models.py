@@ -12,7 +12,7 @@ class NomenclatureGroup(models.Model):
     )
     name = models.CharField('Название', max_length=255)
     parent = models.ForeignKey(
-        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        'self', on_delete=models.CASCADE, null=True, blank=True,
         related_name='children', verbose_name='Родительская группа',
     )
 
@@ -24,6 +24,27 @@ class NomenclatureGroup(models.Model):
 
     def __str__(self):
         return self.name
+
+    def get_descendant_count(self):
+        """Подсчёт вложенных групп и позиций для подтверждения удаления."""
+        child_groups = 0
+        items = self.nomenclatures.filter(is_deleted=False).count()
+        for child in self.children.all():
+            child_groups += 1
+            cg, ci = child._descendant_counts()
+            child_groups += cg
+            items += ci
+        return child_groups, items
+
+    def _descendant_counts(self):
+        child_groups = 0
+        items = self.nomenclatures.filter(is_deleted=False).count()
+        for child in self.children.all():
+            child_groups += 1
+            cg, ci = child._descendant_counts()
+            child_groups += cg
+            items += ci
+        return child_groups, items
 
 
 class MeasureUnit(models.Model):
@@ -58,6 +79,11 @@ class Nomenclature(SoftDeletableModel):
         POT_PLANT = 'pot_plant', 'Горшечное растение'
         SERVICE = 'service', 'Услуга'
 
+    class AccountingType(models.TextChoices):
+        STOCK_MATERIAL = 'stock_material', 'Складской материал'
+        FINISHED_BOUQUET = 'finished_bouquet', 'Готовые букеты'
+        SERVICE = 'service', 'Услуги'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         'core.Organization', on_delete=models.CASCADE,
@@ -71,6 +97,10 @@ class Nomenclature(SoftDeletableModel):
     nomenclature_type = models.CharField(
         'Тип', max_length=20, choices=NomenclatureType.choices,
         default=NomenclatureType.SINGLE_FLOWER,
+    )
+    accounting_type = models.CharField(
+        'Тип учёта', max_length=20, choices=AccountingType.choices,
+        default=AccountingType.STOCK_MATERIAL,
     )
     sku = models.CharField('Артикул', max_length=50, blank=True, default='')
     barcode = models.CharField('Штрихкод', max_length=50, blank=True, default='')
@@ -111,10 +141,32 @@ class Nomenclature(SoftDeletableModel):
         indexes = [
             models.Index(fields=['organization', 'nomenclature_type']),
             models.Index(fields=['organization', 'is_active', 'is_deleted']),
+            models.Index(fields=['organization', 'accounting_type']),
         ]
 
     def __str__(self):
         return self.name
+
+
+class PurchasePriceHistory(models.Model):
+    """История закупочных цен (формируется автоматически из поступлений)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    nomenclature = models.ForeignKey(
+        Nomenclature, on_delete=models.CASCADE,
+        related_name='price_history', verbose_name='Номенклатура',
+    )
+    purchase_price = models.DecimalField('Закупочная цена', max_digits=12, decimal_places=2)
+    source = models.CharField('Источник', max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'purchase_price_history'
+        verbose_name = 'История закупочной цены'
+        verbose_name_plural = 'История закупочных цен'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.nomenclature.name}: {self.purchase_price} ({self.created_at:%d.%m.%Y})'
 
 
 class BouquetTemplate(models.Model):
@@ -130,6 +182,7 @@ class BouquetTemplate(models.Model):
         related_name='bouquet_template', verbose_name='Номенклатура',
     )
     bouquet_name = models.CharField('Название букета', max_length=500, blank=True, default='')
+    image = models.ImageField('Фото шаблона', upload_to='bouquet_templates/', blank=True, null=True)
     assembly_time_minutes = models.PositiveIntegerField('Время сборки (мин)', default=15)
     difficulty = models.PositiveSmallIntegerField('Сложность (1-5)', default=3)
     description = models.TextField('Описание сборки', blank=True, default='')
@@ -141,6 +194,12 @@ class BouquetTemplate(models.Model):
 
     def __str__(self):
         return f'Шаблон: {self.nomenclature.name}'
+
+    def delete(self, *args, **kwargs):
+        # Удаляем фото шаблона при удалении
+        if self.image:
+            self.image.delete(save=False)
+        super().delete(*args, **kwargs)
 
 
 class BouquetComponent(models.Model):

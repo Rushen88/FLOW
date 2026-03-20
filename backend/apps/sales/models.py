@@ -2,6 +2,45 @@ import uuid
 from django.db import models
 
 
+class SalesCategory(models.Model):
+    """Категория для кассы (POS)."""
+
+    class SourceType(models.TextChoices):
+        NOMENCLATURE = 'nomenclature', 'Номенклатура'
+        FINISHED_BOUQUETS = 'finished_bouquets', 'Готовые букеты'
+        RESERVE = 'reserve', 'Резерв'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        'core.Organization', on_delete=models.CASCADE,
+        related_name='sales_categories', verbose_name='Организация',
+    )
+    name = models.CharField('Название', max_length=255)
+    icon = models.CharField('Иконка', max_length=50, blank=True, default='')
+    sort_order = models.PositiveIntegerField('Порядок', default=0)
+    is_visible_in_cashier = models.BooleanField('Видна в кассе', default=True)
+    source_type = models.CharField(
+        'Тип источника', max_length=20, choices=SourceType.choices,
+        default=SourceType.NOMENCLATURE,
+    )
+    is_system = models.BooleanField('Системная', default=False)
+    groups = models.ManyToManyField(
+        'nomenclature.NomenclatureGroup', blank=True,
+        related_name='sales_categories', verbose_name='Группы номенклатуры',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'sales_categories'
+        verbose_name = 'Категория продаж'
+        verbose_name_plural = 'Категории продаж'
+        ordering = ['sort_order', 'name']
+
+    def __str__(self):
+        return self.name
+
+
 class Sale(models.Model):
     """Продажа (чек)."""
 
@@ -82,6 +121,12 @@ class Sale(models.Model):
 
 class SaleItem(models.Model):
     """Позиция продажи."""
+
+    class SourceMode(models.TextChoices):
+        CATALOG = 'catalog', 'Каталог'
+        READY_BOUQUET = 'ready_bouquet', 'Готовый букет'
+        RESERVE = 'reserve', 'Резерв'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     sale = models.ForeignKey(
         Sale, on_delete=models.CASCADE,
@@ -101,6 +146,14 @@ class SaleItem(models.Model):
     discount_percent = models.DecimalField('Скидка %', max_digits=5, decimal_places=2, default=0)
     total = models.DecimalField('Итого', max_digits=12, decimal_places=2, default=0)
     is_custom_bouquet = models.BooleanField('Авторский букет', default=False)
+    source_mode = models.CharField(
+        'Режим источника', max_length=20, choices=SourceMode.choices,
+        default=SourceMode.CATALOG,
+    )
+    reserve = models.ForeignKey(
+        'inventory.Reserve', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sale_items', verbose_name='Резерв',
+    )
 
     class Meta:
         db_table = 'sale_items'

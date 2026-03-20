@@ -41,6 +41,7 @@ urlpatterns = [
     path('api/marketing/', include('apps.marketing.urls')),
     path('api/delivery/', include('apps.delivery.urls')),
     path('api/analytics/', include('apps.analytics.urls')),
+    path('api/cashier/', include('apps.cashier.urls')),
 ]
 
 if settings.DEBUG:

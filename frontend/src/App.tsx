@@ -18,6 +18,7 @@ const FinancePage = lazy(() => import('./pages/FinancePage'))
 const MarketingPage = lazy(() => import('./pages/MarketingPage'))
 const DeliveryPage = lazy(() => import('./pages/DeliveryPage'))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
+const CashierPage = lazy(() => import('./pages/CashierPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
@@ -81,6 +82,7 @@ export default function App() {
           <Route index element={<Suspense fallback={<PageLoader />}><DashboardPage /></Suspense>} />
           <Route path="nomenclature" element={<Suspense fallback={<PageLoader />}><NomenclaturePage /></Suspense>} />
           <Route path="inventory" element={<Suspense fallback={<PageLoader />}><InventoryPage /></Suspense>} />
+          <Route path="cashier" element={<Suspense fallback={<PageLoader />}><CashierPage /></Suspense>} />
           <Route path="sales" element={<Suspense fallback={<PageLoader />}><SalesPage /></Suspense>} />
           <Route path="orders" element={<Suspense fallback={<PageLoader />}><OrdersPage /></Suspense>} />
           <Route path="customers" element={<Suspense fallback={<PageLoader />}><CustomersPage /></Suspense>} />

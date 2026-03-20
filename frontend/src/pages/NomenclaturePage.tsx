@@ -42,7 +42,7 @@ interface BouquetTemplate {
 
 // Tree types from /groups/tree/ endpoint
 interface TreeItem {
-  id: string; name: string; nomenclature_type: string; sku: string
+  id: string; name: string; nomenclature_type: string; accounting_type: string; sku: string
   retail_price: string; purchase_price: string; is_active: boolean
 }
 interface TreeGroup {
@@ -68,10 +68,18 @@ const NOM_TYPES = [
   { value: 'service', label: 'Услуга' },
 ]
 
+const ACCOUNTING_TYPES = [
+  { value: 'stock_material', label: 'Складской товар' },
+  { value: 'finished_bouquet', label: 'Готовый букет' },
+  { value: 'service', label: 'Услуга' },
+]
+
+const accountingTypeLabel = (v: string) => ACCOUNTING_TYPES.find(t => t.value === v)?.label || v
+
 const nomTypeLabel = (v: string) => NOM_TYPES.find(t => t.value === v)?.label || v
 
 const defaultItemForm = () => ({
-  name: '', nomenclature_type: 'single_flower', group: '' as string, sku: '', barcode: '',
+  name: '', nomenclature_type: 'single_flower', accounting_type: 'stock_material', group: '' as string, sku: '', barcode: '',
   unit: '' as string, purchase_price: '', retail_price: '', min_price: '', markup_percent: '',
   color: '', country: '', stem_length: '' as string | number, diameter: '' as string | number,
   default_shelf_life_days: '' as string | number, min_stock: '' as string | number, is_active: true, notes: '',
@@ -160,6 +168,10 @@ function TreeItemRow({ item, depth, onEdit, onDelete }: {
       <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap>{item.name}</Typography>
       <Chip label={nomTypeLabel(item.nomenclature_type)} size="small" variant="outlined"
         sx={{ height: 20, fontSize: '0.65rem', flexShrink: 0 }} />
+      {item.accounting_type && item.accounting_type !== 'stock_material' && (
+        <Chip label={accountingTypeLabel(item.accounting_type)} size="small" color="info" variant="outlined"
+          sx={{ height: 20, fontSize: '0.6rem', flexShrink: 0 }} />
+      )}
       {item.sku && (
         <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0, mx: 0.5 }}>{item.sku}</Typography>
       )}
@@ -354,6 +366,7 @@ export default function NomenclaturePage() {
       setEditItem(item)
       setItemForm({
         name: item.name, nomenclature_type: item.nomenclature_type,
+        accounting_type: (item as any).accounting_type || 'stock_material',
         group: item.group || '', sku: item.sku || '', barcode: item.barcode || '',
         unit: item.unit || '', purchase_price: item.purchase_price || '',
         retail_price: item.retail_price || '', min_price: item.min_price || '',
@@ -448,10 +461,15 @@ export default function NomenclaturePage() {
     setGrpSaving(false)
   }
 
-  const confirmDeleteGroup = (id: string, name: string) => {
+  const confirmDeleteGroup = async (id: string, name: string) => {
     const g = flatGroups.find(x => x.id === id)
-    if (g) setDelGrp(g)
-    else setDelGrp({ id, name, organization: '', parent: null })
+    const grp = g || { id, name, organization: '', parent: null }
+    try {
+      const res = await api.get(`/nomenclature/groups/${id}/delete-info/`)
+      const info = res.data
+      ;(grp as any)._deleteInfo = info
+    } catch { /* ignore */ }
+    setDelGrp(grp)
   }
 
   const removeGrp = async () => {
@@ -743,6 +761,12 @@ export default function NomenclaturePage() {
               {NOM_TYPES.map(t => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
             </TextField>
           </Grid>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <TextField label="Тип учёта" select fullWidth value={itemForm.accounting_type}
+              onChange={e => setItemForm({ ...itemForm, accounting_type: e.target.value })}>
+              {ACCOUNTING_TYPES.map(t => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
+            </TextField>
+          </Grid>
           <Grid size={{ xs: 12, md: 6 }}>
             <TextField label="Группа" select fullWidth value={itemForm.group}
               onChange={e => setItemForm({ ...itemForm, group: e.target.value })}>
@@ -909,7 +933,8 @@ export default function NomenclaturePage() {
       {/* ─── Confirm Dialogs ─── */}
       <ConfirmDialog open={!!delItemId} title="Удалить позицию?" message={`Удалить "${delItemName}"? Это действие нельзя отменить.`}
         onConfirm={removeItem} onCancel={() => setDelItemId(null)} />
-      <ConfirmDialog open={!!delGrp} title="Удалить группу?" message={`Удалить группу "${delGrp?.name}"?`}
+      <ConfirmDialog open={!!delGrp} title="Удалить группу?"
+        message={`Удалить группу "${delGrp?.name}"?${(delGrp as any)?._deleteInfo ? ` Будет удалено: ${(delGrp as any)._deleteInfo.child_groups} подгрупп, ${(delGrp as any)._deleteInfo.items} позиций` : ''}`}
         onConfirm={removeGrp} onCancel={() => setDelGrp(null)} />
       <ConfirmDialog open={!!delUnit} title="Удалить единицу?" message={`Удалить единицу "${delUnit?.name}"?`}
         onConfirm={removeUnit} onCancel={() => setDelUnit(null)} />

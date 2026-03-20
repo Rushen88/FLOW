@@ -35,4 +35,4 @@ class InventoryDocumentAdmin(admin.ModelAdmin):
 
 @admin.register(Reserve)
 class ReserveAdmin(admin.ModelAdmin):
-    list_display = ('nomenclature', 'warehouse', 'quantity', 'is_active')
+    list_display = ('reserve_number', 'bouquet_nomenclature', 'warehouse', 'quantity', 'status')

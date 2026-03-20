@@ -9,7 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 
-from .models import Batch, StockBalance, StockMovement, InventoryDocument, Reserve
+from .models import Batch, StockBalance, StockMovement, InventoryDocument, Reserve, ReceiptDocument
 from .serializers import (
     BatchSerializer, StockBalanceSerializer, StockMovementSerializer,
     InventoryDocumentSerializer, ReserveSerializer,
@@ -640,3 +640,34 @@ class ReserveViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Reserve.objects.select_related('nomenclature', 'warehouse')
         return _tenant_filter(qs, self.request.user)
+
+
+class ReceiptDocumentViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
+    """Документы приёмки (документ-ориентированный приход)."""
+    from .serializers import ReceiptDocumentSerializer
+    serializer_class = ReceiptDocumentSerializer
+    queryset = ReceiptDocument.objects.all()
+
+    def get_queryset(self):
+        from .models import ReceiptDocument
+        qs = ReceiptDocument.objects.select_related('supplier').prefetch_related('items', 'items__nomenclature', 'items__warehouse')
+        return _tenant_filter(qs, self.request.user)
+
+    def perform_create(self, serializer):
+        from apps.core.mixins import _resolve_org
+        org = _resolve_org(self.request.user)
+        serializer.save(organization=org, created_by=self.request.user)
+
+    @action(detail=True, methods=['post'], url_path='process')
+    @db_transaction.atomic
+    def process_document(self, request, pk=None):
+        """Провести документ — создаёт партии, движения, обновляет остатки."""
+        from .services import process_receipt_document
+        doc = self.get_object()
+        if doc.items.count() == 0:
+            return Response({'detail': 'Документ пуст — добавьте позиции.'}, status=400)
+        try:
+            process_receipt_document(doc, user=request.user)
+            return Response({'status': 'ok', 'total_cost': str(doc.total_cost)})
+        except Exception as e:
+            return Response({'detail': str(e)}, status=400)
