@@ -676,6 +676,26 @@ npm run dev                       # → http://localhost:3000
 
 ---
 
+## Changelog (2026-03-26) — История цен, поиск компонентов букета, исправление шаблонов, nginx cache
+
+### Backend
+- ✅ Модель `PurchasePriceHistory` расширена полем `retail_price` (nullable) для хранения розничной цены наряду с закупочной
+- ✅ `NomenclatureViewSet.perform_update()` — при ручном изменении `purchase_price` или `retail_price` автоматически создаётся запись в `PurchasePriceHistory` (source: «Ручное изменение»)
+- ✅ `NomenclatureViewSet.update_price()` — быстрое изменение цены также создаёт запись в истории (source: «Быстрое изменение цены»)
+- ✅ Исправлен `NomenclatureViewSet.get_queryset()` — фильтр `is_template_placeholder=False` теперь применяется только для action `list`, что позволяет редактировать шаблоны букетов (ранее возвращал 404 «No Nomenclature matches the given query»)
+- ✅ Миграция `0014_purchasepricehistory_retail_price` — добавление nullable `retail_price` в `PurchasePriceHistory`
+
+### Frontend
+- ✅ Таблица «История цен» теперь отображает оба столбца: «Закупочная» и «Розничная»
+- ✅ Поиск компонентов букета: `<TextField select>` заменён на `<Autocomplete>` с текстовым поиском (аналогично сборке в модуле «Склад»)
+- ✅ В строке компонента букета отображается розничная цена выбранной позиции
+- ✅ Под компонентами показывается расчётная розничная стоимость букета (сумма retail_price × quantity)
+
+### DevOps / nginx
+- ✅ `nginx.conf`: добавлен `Cache-Control: no-cache` для корневого location `/` — браузер всегда запрашивает свежий `index.html`, что устраняет ошибку «Failed to fetch dynamically imported module» после редеплоя (Vite меняет хэши чанков при каждой сборке)
+
+---
+
 ## Changelog (2026-03-13) — Номенклатура: hotfix ошибок создания и ускорение загрузки
 
 ### Исправления backend
