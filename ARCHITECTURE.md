@@ -1229,7 +1229,7 @@ npm run dev                       # → http://localhost:3000
 ## Changelog (2026-02-27)
 
 ### Backend
-- **Sales**: Полная переработка сериализаторов. `SaleSerializer` принимает `items_data` для позиций (вместо отдельных запросов). `SaleItemSerializer` возвращает `nomenclature_type`, `warehouse_name`, `bouquet_components` (состав букета). `_recalc_totals` учитывает `discount_percent` (глобальная скидка на чек).
+- **Sales**: Полная переработка сериализаторов. `SaleSerializer` принимает `items_data` для позиций (вместо отдельных запросов). `SaleItemSerializer` возвращает `accounting_type`, `warehouse_name`, `bouquet_components` (состав букета). `_recalc_totals` учитывает `discount_percent` (глобальная скидка на чек).
 - **Sale model**: Добавлено поле `discount_percent` (DecimalField, 5,2) — процент глобальной скидки.
 - **BouquetTemplate model**: Добавлено поле `bouquet_name` (CharField, 500) — пользовательское название букета.
 - **NomenclatureGroupViewSet**: Добавлен `.distinct()` для устранения дублирования дочерних групп.
@@ -1257,7 +1257,7 @@ npm run dev                       # → http://localhost:3000
 ### Frontend
 - **shared/types.ts**: Создан модуль общих TypeScript-типов (~280 строк): `Organization`, `User`, `Nomenclature`, `Sale`, `SaleItem`, `Customer`, `Wallet`, `Transaction`, `Delivery`, `Batch`, `Movement` и др.
 - **shared/formatters.ts**: Создан модуль форматирования: `fmtNum`, `fmtCurrency`, `fmtPercent`, `fmtDate`, `fmtDateTime`, `fmtTime`, `fmtPhone`, `truncate`, `pluralize`.
-- **shared/constants.ts**: Создан модуль констант: `USER_ROLES`, `SALE_STATUSES`, `ORDER_STATUSES`, `DELIVERY_STATUSES`, `MOVEMENT_TYPES`, `NOMENCLATURE_TYPES`, `WAREHOUSE_TYPES`, `WALLET_TYPES`, `TRANSACTION_TYPES`, `WRITEOFF_REASONS`, `AD_CHANNEL_TYPES`.
+- **shared/constants.ts**: Создан модуль констант: `USER_ROLES`, `SALE_STATUSES`, `ORDER_STATUSES`, `DELIVERY_STATUSES`, `MOVEMENT_TYPES`, `ACCOUNTING_TYPES`, `WAREHOUSE_TYPES`, `WALLET_TYPES`, `TRANSACTION_TYPES`, `WRITEOFF_REASONS`, `AD_CHANNEL_TYPES`.
 - **shared/index.ts**: Barrel-экспорт всех модулей через `@/shared`.
 
 ### Cleanup
@@ -1332,7 +1332,7 @@ npm run dev                       # → http://localhost:3000
 - ✅ `cashier.views.CashierFeedView` расширяет группы пользовательской кассовой категории по всей дочерней ветке, поэтому витрина работает по полной иерархии номенклатуры, а не только по выбранным корням.
 
 ### Frontend
-- ✅ `NomenclaturePage.tsx`: главным полем карточки стал `Тип учёта`; `nomenclature_type` теперь вычисляется из доменной логики, а фото позиции отправляется вместе с созданием/сохранением карточки.
+- ✅ `NomenclaturePage.tsx`: главным полем карточки стал `Тип учёта`; `nomenclature_type` полностью удалён из модели и всех файлов.
 - ✅ `NomenclaturePage.tsx`: создание и редактирование шаблонов букета поддерживает фото шаблона, цену продажи и скрытый placeholder вместо видимого дубля в дереве номенклатуры.
 - ✅ `InventoryPage.tsx`: вкладка поступлений стала документно-ориентированной (`ReceiptDocument`), а список сырых партий вынесен в отдельную вкладку `Партии`.
 - ✅ `InventoryPage.tsx`: вкладка `Перемещения` использует специализированный transfer flow вместо универсального CRUD движений; таблицы переведены на компактные строки, а поиск по остаткам стал мгновенным.
@@ -1348,3 +1348,28 @@ npm run dev                       # → http://localhost:3000
 - ✅ Удалён дублирующий вступительный блок и исправлены устаревшие сведения: auth URLs, наименование продукта, количество страниц frontend и инструкции по созданию суперпользователя.
 - ✅ Roadmap приведён к прикладной форме: зафиксированы приоритетные зоны роста для flower SaaS и отдельно обозначено, что не нужно форсировать на текущем этапе.
 - ✅ Из корня проекта удалены временные диагностические скрипты, не относящиеся к постоянной архитектуре продукта.
+
+---
+
+## 14. Последние изменения (2026-03-25) — Удаление nomenclature_type, drag-and-drop в дереве номенклатуры, компактные таблицы
+
+### Backend
+- ✅ **Удалено поле `nomenclature_type`** из модели `Nomenclature`. Вся бизнес-логика полностью мигрирована на `accounting_type` (3 значения: `stock_material`, `finished_bouquet`, `service`). Удалён enum-класс `NomenclatureType` (12 значений), индекс `['organization', 'nomenclature_type']`, все ссылки в serializers/views/admin/services.
+- ✅ **Миграция данных** (`0013_remove_nomenclature_type`): перед удалением поля запускается `RunPython`, который маппит `bouquet`/`composition` → `finished_bouquet`, `service` → `service`; остальные остаются `stock_material`.
+- ✅ **inventory/services.py, inventory/views.py, inventory/serializers.py**: все проверки `nomenclature_type == 'service'` заменены на `accounting_type == 'service'`, определение букета (`nomenclature_type__in=['bouquet','composition']`) на `accounting_type='finished_bouquet'`.
+- ✅ **sales/services.py, sales/serializers.py**: аналогичная миграция проверок — теперь единственный источник истины для типа товара это `accounting_type`.
+- ✅ **Новые endpoints для drag-and-drop**: `PATCH /api/nomenclature/items/{id}/move/` (меняет `group`) и `PATCH /api/nomenclature/groups/{id}/move/` (меняет `parent`).
+
+### Frontend
+- ✅ **NomenclaturePage**: полностью удалены `NOM_TYPES`, `nomTypeLabel()`, `inferNomenclatureType()`. В дереве отображаются колонки «Тип учёта», «Закупочная», «Розничная» (через компонент `TreeHeader`). Заголовки цен показываются только на уровне items, не на папках.
+- ✅ **Drag-and-drop в дереве номенклатуры**: реализован через нативный HTML5 Draggable API. Позиции и группы перетаскиваются между группами с подсветкой зоны сброса. Автораскрытие группы при наведении (800ms таймер). Зона «Перетащите в корень» для перемещения без группы. API-запросы `/move/` отправляются на drop.
+- ✅ **Компактные строки** во вкладках «Единицы измерения» и «Шаблоны букетов»: добавлен проп `dense` на `DataTable`.
+- ✅ **Удалено поле «Тип»** из карточки номенклатуры — теперь показывается только «Тип учёта».
+- ✅ **InventoryPage**: 12 ссылок на `nomenclature_type` заменены на `accounting_type` (интерфейс `NomRef`, фильтры компонентов, услуг, букетов).
+- ✅ **SalesPage**: интерфейсы `SaleItem`, `NomRef` и определение букета мигрированы на `accounting_type`.
+- ✅ **shared/types.ts**: удалён тип `NomenclatureType`, добавлен `AccountingType`. Поле `nomenclature_type` удалено из интерфейсов `Nomenclature` и `SaleItem`.
+- ✅ **shared/constants.ts**: `NOMENCLATURE_TYPES` заменён на `ACCOUNTING_TYPES` (3 значения).
+- ✅ **extractError.ts**: удалён маппинг `nomenclature_type`.
+
+### Миграции
+- ✅ `nomenclature/migrations/0013_remove_nomenclature_type.py` — RunPython + RemoveIndex + RemoveField
