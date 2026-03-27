@@ -25,6 +25,9 @@ class BatchSerializer(serializers.ModelSerializer):
 class StockBalanceSerializer(serializers.ModelSerializer):
     nomenclature_name = serializers.CharField(source='nomenclature.name', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    purchase_price = serializers.DecimalField(source='nomenclature.purchase_price', max_digits=12, decimal_places=2, read_only=True)
+    retail_price = serializers.DecimalField(source='nomenclature.retail_price', max_digits=12, decimal_places=2, read_only=True)
+    accounting_type = serializers.CharField(source='nomenclature.accounting_type', read_only=True)
 
     class Meta:
         model = StockBalance
@@ -80,7 +83,7 @@ class ReceiptDocumentItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReceiptDocumentItem
         fields = '__all__'
-        read_only_fields = ['batch', 'total']
+        read_only_fields = ['batch', 'total', 'document']
 
 
 class ReceiptDocumentSerializer(serializers.ModelSerializer):

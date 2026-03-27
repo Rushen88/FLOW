@@ -419,12 +419,13 @@ def assemble_bouquet(
         remaining=bouquet_qty,
         arrival_date=timezone.now().date(),
         notes=notes or 'Сборка букета',
+        is_assembly=True,
     )
 
     StockMovement.objects.create(
         organization=organization,
         nomenclature=nomenclature_bouquet,
-        movement_type=StockMovement.MovementType.RECEIPT,
+        movement_type=StockMovement.MovementType.ASSEMBLY,
         warehouse_to=warehouse_to,
         batch=batch,
         quantity=bouquet_qty,

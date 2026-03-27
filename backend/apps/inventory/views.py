@@ -61,7 +61,7 @@ class BatchViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Batch.objects.select_related('nomenclature', 'warehouse', 'supplier')
         qs = _tenant_filter(qs, self.request.user, tp_field='warehouse__trading_point')
-        return qs.exclude(nomenclature__accounting_type='service')
+        return qs.exclude(nomenclature__accounting_type='service').exclude(is_assembly=True)
 
     def create(self, request, *args, **kwargs):
         """Создание партии через сервисный слой (с auto-receipt)."""
@@ -143,6 +143,109 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             )
             .order_by('nomenclature__name')
         )
+
+    def destroy(self, request, *args, **kwargs):
+        """Удаление остатка — только для owner/admin."""
+        user = request.user
+        if user.role not in ('owner', 'admin'):
+            return Response(
+                {'detail': 'Удаление остатков доступно только владельцам и администраторам.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        instance = self.get_object()
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['get'], url_path='bouquet-detail')
+    def bouquet_detail(self, request, pk=None):
+        """
+        Детальная информация о букете на остатках:
+        - дата создания, кем создан
+        - себестоимость, цена продажи
+        - состав (компоненты из BouquetBatchComponentSnapshot)
+        """
+        from .models import BouquetBatchComponentSnapshot
+        from apps.nomenclature.models import BouquetTemplate
+
+        sb = self.get_object()
+        nom = sb.nomenclature
+        if nom.accounting_type != 'finished_bouquet':
+            return Response({'detail': 'Позиция не является букетом.'}, status=400)
+
+        # Ищем последнюю партию этого букета на этом складе с остатком
+        batch = (
+            Batch.objects.filter(
+                organization=sb.organization,
+                warehouse=sb.warehouse,
+                nomenclature=nom,
+                remaining__gt=0,
+            )
+            .order_by('-created_at')
+            .select_related('nomenclature')
+            .first()
+        )
+
+        result = {
+            'nomenclature_id': str(nom.id),
+            'nomenclature_name': nom.name,
+            'purchase_price': str(nom.purchase_price),
+            'retail_price': str(nom.retail_price),
+            'quantity': str(sb.quantity),
+            'warehouse_name': sb.warehouse.name,
+            'batch': None,
+            'template_components': [],
+        }
+
+        if batch:
+            # Находим пользователя-создателя через StockMovement
+            creator_movement = StockMovement.objects.filter(
+                batch=batch,
+                movement_type__in=['assembly', 'receipt'],
+            ).select_related('user').order_by('created_at').first()
+
+            creator_name = ''
+            if creator_movement and creator_movement.user:
+                u = creator_movement.user
+                creator_name = u.get_full_name() or u.username
+
+            # Получаем снимок состава
+            snapshots = BouquetBatchComponentSnapshot.objects.filter(
+                batch=batch,
+            ).select_related('nomenclature').order_by('sort_order')
+
+            components = [{
+                'nomenclature_id': str(s.nomenclature_id),
+                'nomenclature_name': s.nomenclature.name,
+                'quantity': str(s.quantity_per_unit),
+                'price': str(s.price_per_unit),
+                'accounting_type': s.accounting_type,
+                'source_mode': s.source_mode,
+            } for s in snapshots]
+
+            result['batch'] = {
+                'id': str(batch.id),
+                'created_at': batch.created_at.isoformat(),
+                'arrival_date': str(batch.arrival_date),
+                'cost_price': str(batch.purchase_price),
+                'is_assembly': batch.is_assembly,
+                'creator': creator_name,
+                'image': batch.image.url if batch.image else None,
+                'notes': batch.notes,
+                'components': components,
+            }
+
+        # Также загружаем компоненты из шаблона (для коррекции)
+        try:
+            template = BouquetTemplate.objects.get(nomenclature=nom)
+            result['template_components'] = [{
+                'nomenclature_id': str(c.nomenclature_id),
+                'nomenclature_name': c.nomenclature.name,
+                'quantity': str(c.quantity),
+            } for c in template.components.select_related('nomenclature').all()]
+        except BouquetTemplate.DoesNotExist:
+            pass
+
+        return Response(result)
 
     @action(detail=False, methods=['get'], url_path='summary')
     def summary(self, request):

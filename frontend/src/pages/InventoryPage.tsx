@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Box, Typography, Tab, Tabs, Card, CardContent, Chip,
   TextField, MenuItem, IconButton, Button, Dialog, DialogTitle, DialogContent, DialogActions,
-  ToggleButtonGroup, ToggleButton, Tooltip, Autocomplete, Avatar,
+  ToggleButtonGroup, ToggleButton, Tooltip, Autocomplete, Avatar, FormControlLabel, Checkbox,
+  Table, TableHead, TableBody, TableRow, TableCell, CircularProgress,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
-import { Add, Edit, Delete, Inventory2, LocalShipping, SwapHoriz, RemoveCircleOutline, AutoAwesome, CallSplit, AutoFixHigh, ListAlt, Tune, Description, PlayArrow } from '@mui/icons-material'
+import { Add, Delete, Inventory2, LocalShipping, SwapHoriz, RemoveCircleOutline, AutoAwesome, CallSplit, AutoFixHigh, ListAlt, Tune, PlayArrow, Visibility, Close } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import api from '../api'
 import { useAuth } from '../contexts/AuthContext'
@@ -20,6 +21,7 @@ interface StockBalance {
   id: string; organization: string; warehouse: string; nomenclature: string
   quantity: string; avg_purchase_price: string; updated_at: string
   nomenclature_name: string; warehouse_name: string
+  purchase_price: string; retail_price: string; accounting_type: string
 }
 interface Batch {
   id: string; organization: string; nomenclature: string; supplier: string
@@ -155,55 +157,20 @@ export default function InventoryPage() {
   useEffect(() => { if (tab === 0) fetchStock() }, [tab, fetchStock])
 
   // ═══════════════════════════════════════════
-  // Tab 1 — Поступления (CRUD)
+  // Партии (read-only, отображаются на вкладке «Поступления»)
   // ═══════════════════════════════════════════
   const [batches, setBatches] = useState<Batch[]>([])
   const [bLoad, setBLoad] = useState(false)
-  const [bDlg, setBDlg] = useState(false)
-  const [editB, setEditB] = useState<Batch | null>(null)
-  const [bForm, setBForm] = useState({ nomenclature: '', warehouse: '', supplier: '', purchase_price: '', quantity: '', remaining: '', arrival_date: '', expiry_date: '', invoice_number: '', notes: '' })
-  const [delB, setDelB] = useState<Batch | null>(null)
 
   const fetchBatches = useCallback(() => {
     setBLoad(true)
     api.get('/inventory/batches/')
       .then(res => setBatches(res.data.results || res.data || []))
-      .catch(() => { setBatches([]); notify('Ошибка загрузки поступлений', 'error') })
+      .catch(() => { setBatches([]); notify('Ошибка загрузки партий', 'error') })
       .finally(() => setBLoad(false))
   }, [notify])
 
-  useEffect(() => { if (tab === 3) fetchBatches() }, [tab, fetchBatches])
-
-  const openBDlg = (b?: Batch) => {
-    if (b) {
-      setEditB(b)
-      setBForm({
-        nomenclature: b.nomenclature, warehouse: b.warehouse, supplier: b.supplier || '',
-        purchase_price: b.purchase_price, quantity: b.quantity, remaining: b.remaining,
-        arrival_date: b.arrival_date || '', expiry_date: b.expiry_date || '',
-        invoice_number: b.invoice_number || '', notes: b.notes || '',
-      })
-    } else {
-      setEditB(null)
-      setBForm({ nomenclature: '', warehouse: '', supplier: '', purchase_price: '', quantity: '', remaining: '', arrival_date: '', expiry_date: '', invoice_number: '', notes: '' })
-    }
-    setBDlg(true)
-  }
-
-  const saveB = async () => {
-    try {
-      const d = { ...bForm, expiry_date: bForm.expiry_date || null }
-      if (editB) { await api.patch(`/inventory/batches/${editB.id}/`, d); notify('Поступления обновлена') }
-      else { await api.post('/inventory/batches/', d); notify('Поступления создана') }
-      setBDlg(false); fetchBatches()
-    } catch (err) { notify(extractError(err, 'Ошибка сохранения'), 'error') }
-  }
-
-  const removeB = async () => {
-    if (!delB) return
-    try { await api.delete(`/inventory/batches/${delB.id}/`); notify('Поступления удалена'); setDelB(null); fetchBatches() }
-    catch (err) { notify(extractError(err, 'Ошибка удаления'), 'error') }
-  }
+  useEffect(() => { if (tab === 1) fetchBatches() }, [tab, fetchBatches])
 
   // ═══════════════════════════════════════════
   // Tab 2 — Движения (CRUD)
@@ -310,8 +277,36 @@ export default function InventoryPage() {
   const [writeOffForm, setWriteOffForm] = useState({ warehouse: '', nomenclature: '', quantity: '1', reason: 'expired', notes: '' })
   const [writeOffSaving, setWriteOffSaving] = useState(false)
 
+  // ── Stock deletion (admin/owner only) ──
+  const [deleteStockRow, setDeleteStockRow] = useState<StockBalance | null>(null)
+  const removeStockRow = async () => {
+    if (!deleteStockRow) return
+    try {
+      await api.delete(`/inventory/stock/${deleteStockRow.id}/`)
+      notify('Остаток удалён')
+      setDeleteStockRow(null)
+      fetchStock()
+    } catch (err) { notify(extractError(err, 'Ошибка удаления'), 'error') }
+  }
+
+  // ── Bouquet detail (drill-down) ──
+  const [bouquetDetailDlg, setBouquetDetailDlg] = useState(false)
+  const [bouquetDetail, setBouquetDetail] = useState<any>(null)
+  const [bouquetDetailLoading, setBouquetDetailLoading] = useState(false)
+
+  const openBouquetDetail = async (row: StockBalance) => {
+    setBouquetDetailDlg(true)
+    setBouquetDetailLoading(true)
+    setBouquetDetail(null)
+    try {
+      const res = await api.get(`/inventory/stock/${row.id}/bouquet-detail/`)
+      setBouquetDetail(res.data)
+    } catch (err) { notify(extractError(err, 'Ошибка загрузки данных букета'), 'error') }
+    setBouquetDetailLoading(false)
+  }
+
   // ═══════════════════════════════════════════
-  // Tab 3 — Документы приёмки
+  // Документы приёмки
   // ═══════════════════════════════════════════
   interface ReceiptDoc {
     id: string; number: string; date: string; supplier: string | null; supplier_name: string
@@ -506,7 +501,7 @@ export default function InventoryPage() {
       notify(res.data.message || 'Букет собран!')
       setAsmDlg(false)
       if (tab === 0) fetchStock()
-      if (tab === 3) fetchBatches()
+      if (tab === 1) fetchBatches()
       if (tab === 2) fetchMoves()
     } catch (err) { notify(extractError(err, 'Ошибка сборки букета'), 'error') }
     setAsmSaving(false)
@@ -568,7 +563,7 @@ export default function InventoryPage() {
       notify(res.data.message || 'Букет раскомплектован!')
       setDasmDlg(false)
       if (tab === 0) fetchStock()
-      if (tab === 3) fetchBatches()
+      if (tab === 1) fetchBatches()
       if (tab === 2) fetchMoves()
     } catch (err) { notify(extractError(err, 'Ошибка раскомплектовки'), 'error') }
     setDasmSaving(false)
@@ -615,7 +610,7 @@ export default function InventoryPage() {
       notify(res.data.message || 'Букет скорректирован')
       setCorrDlg(false)
       if (tab === 0) fetchStock()
-      if (tab === 3) fetchBatches()
+      if (tab === 1) fetchBatches()
       if (tab === 2) fetchMoves()
     } catch (err) {
       notify(extractError(err, 'Ошибка коррекции букета'), 'error')
@@ -640,7 +635,6 @@ export default function InventoryPage() {
             <Tab icon={<Inventory2 />} iconPosition="start" label="Остатки" />
             <Tab icon={<LocalShipping />} iconPosition="start" label="Поступления" />
             <Tab icon={<SwapHoriz />} iconPosition="start" label="Перемещения" />
-            <Tab icon={<Description />} iconPosition="start" label="Партии" />
           </Tabs>
 
           {/* ── Tab 0: Остатки ── */}
@@ -688,11 +682,11 @@ export default function InventoryPage() {
                       )
                     }
                   },
-                  { key: 'avg_purchase_price', label: 'Ср. цена', align: 'right', render: (v: string) => `${fmtNum(v)} ₽` },
-                  { key: '_total', label: 'Сумма', align: 'right', render: (_: any, row: StockBalance) => `${fmtNum(parseFloat(row.quantity) * parseFloat(row.avg_purchase_price))} ₽` },
-                  { key: 'updated_at', label: 'Обновлено', render: (v: string) => fmtDateTime(v) },
+                  { key: 'purchase_price', label: 'Цена закупа', align: 'right', render: (v: string) => `${fmtNum(v)} ₽` },
+                  { key: 'retail_price', label: 'Цена продажи', align: 'right', render: (v: string) => `${fmtNum(v)} ₽` },
+                  { key: 'updated_at', label: 'Обновлено', render: (v: string) => fmtDate(v) },
                   {
-                    key: '_act', label: '', align: 'center', width: 170, render: (_: any, row: StockBalance) => (
+                    key: '_act', label: '', align: 'center', width: 280, render: (_: any, row: StockBalance) => (
                       <Box sx={{ display: 'flex', gap: 0.5 }}>
                         <Button
                           size="small"
@@ -702,32 +696,48 @@ export default function InventoryPage() {
                           Продать
                         </Button>
                         {allNom.find(n => n.id === row.nomenclature)?.accounting_type === 'finished_bouquet' && (
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="warning"
-                            startIcon={<Tune fontSize="small" />}
-                            onClick={() => {
-                              const tpl = bouquetTemplates.find(t => t.nomenclature === row.nomenclature)
-                              setCorrForm({ nomenclature_bouquet: row.nomenclature, warehouse: row.warehouse, selling_price: allNom.find(n => n.id === row.nomenclature)?.retail_price || '' })
-                              setCorrRows((tpl?.components || [])
-                                .filter(c => allNom.find(n => n.id === c.nomenclature)?.accounting_type !== 'service')
-                                .map(c => ({
-                                  nomenclature: c.nomenclature,
-                                  name: c.nomenclature_name || allNom.find(n => n.id === c.nomenclature)?.name || '?',
-                                  base_qty: c.quantity,
-                                  writeoff_qty: '0',
-                                  return_qty: c.quantity,
-                                  add_qty: '0',
-                                  reason: 'other',
-                                  return_warehouse: row.warehouse,
-                                  add_warehouse: '',
-                                })))
-                              setCorrDlg(true)
-                            }}
-                          >
-                            Коррекция
-                          </Button>
+                          <>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="info"
+                              startIcon={<Visibility fontSize="small" />}
+                              onClick={() => openBouquetDetail(row)}
+                            >
+                              Просмотр
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="warning"
+                              startIcon={<Tune fontSize="small" />}
+                              onClick={() => {
+                                const tpl = bouquetTemplates.find(t => t.nomenclature === row.nomenclature)
+                                setCorrForm({ nomenclature_bouquet: row.nomenclature, warehouse: row.warehouse, selling_price: allNom.find(n => n.id === row.nomenclature)?.retail_price || '' })
+                                setCorrRows((tpl?.components || [])
+                                  .filter(c => allNom.find(n => n.id === c.nomenclature)?.accounting_type !== 'service')
+                                  .map(c => ({
+                                    nomenclature: c.nomenclature,
+                                    name: c.nomenclature_name || allNom.find(n => n.id === c.nomenclature)?.name || '?',
+                                    base_qty: c.quantity,
+                                    writeoff_qty: '0',
+                                    return_qty: c.quantity,
+                                    add_qty: '0',
+                                    reason: 'other',
+                                    return_warehouse: row.warehouse,
+                                    add_warehouse: '',
+                                  })))
+                                setCorrDlg(true)
+                              }}
+                            >
+                              Коррекция
+                            </Button>
+                          </>
+                        )}
+                        {(user?.role === 'owner' || user?.role === 'admin') && (
+                          <IconButton size="small" color="error" onClick={() => setDeleteStockRow(row)}>
+                            <Delete fontSize="small" />
+                          </IconButton>
                         )}
                       </Box>
                     ),
@@ -749,28 +759,7 @@ export default function InventoryPage() {
             </>
           )}
 
-          {/* ── Tab 1: Поступления ── */}
-          {tab === 3 && (
-            <DataTable
-              dense
-              columns={[
-                { key: 'nomenclature_name', label: 'Номенклатура', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
-                { key: 'warehouse_name', label: 'Склад' },
-                { key: 'purchase_price', label: 'Цена закупки', align: 'right', render: (v: string) => `${fmtNum(v)} ₽` },
-                { key: 'quantity', label: 'Кол-во', align: 'right', render: (v: string) => fmtNum(v) },
-                { key: 'remaining', label: 'Остаток', align: 'right', render: (v: string) => fmtNum(v) },
-                { key: 'arrival_date', label: 'Поступление', render: (v: string) => fmtDate(v) },
-                { key: 'expiry_date', label: 'Годен до', render: (v: string) => fmtDate(v) },
-                { key: 'invoice_number', label: 'Накладная' },
-                { key: '_act', label: '', align: 'center', width: 100, render: (_: any, row: Batch) => (<>
-                  <IconButton size="small" onClick={() => openBDlg(row)}><Edit fontSize="small" /></IconButton>
-                  <IconButton size="small" onClick={() => setDelB(row)}><Delete fontSize="small" /></IconButton>
-                </>) },
-              ]}
-              rows={batches} loading={bLoad} emptyText="Партий нет"
-              headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openBDlg()}>Добавить партию</Button>}
-            />
-          )}
+          {/* deleted: old Партии tab — batches now shown inside tab 1 */}
 
           {/* ── Tab 2: Перемещения ── */}
           {tab === 2 && (
@@ -810,56 +799,27 @@ export default function InventoryPage() {
                 rows={rDocs} loading={rDocLoad} emptyText="Документов приёмки нет"
                 headerActions={<Button variant="contained" startIcon={<Add />} onClick={openRDocDlg}>Новый документ приёмки</Button>}
               />
+
+              {/* ── Партии (история) ── */}
+              <Typography variant="subtitle2" fontWeight={600} sx={{ mt: 3, mb: 1 }}>Партии</Typography>
+              <DataTable
+                dense
+                columns={[
+                  { key: 'nomenclature_name', label: 'Номенклатура', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
+                  { key: 'warehouse_name', label: 'Склад' },
+                  { key: 'purchase_price', label: 'Цена закупки', align: 'right', render: (v: string) => `${fmtNum(v)} ₽` },
+                  { key: 'quantity', label: 'Кол-во', align: 'right', render: (v: string) => fmtNum(v) },
+                  { key: 'remaining', label: 'Остаток', align: 'right', render: (v: string) => fmtNum(v) },
+                  { key: 'arrival_date', label: 'Поступление', render: (v: string) => fmtDate(v) },
+                  { key: 'expiry_date', label: 'Годен до', render: (v: string) => fmtDate(v) },
+                  { key: 'invoice_number', label: 'Накладная' },
+                ]}
+                rows={batches} loading={bLoad} emptyText="Партий нет"
+              />
             </>
           )}
         </CardContent>
       </Card>
-      <EntityFormDialog open={bDlg} onClose={() => setBDlg(false)} onSubmit={saveB}
-        title={editB ? 'Редактировать поступление' : 'Новая партия'} submitText={editB ? 'Сохранить' : 'Создать'}
-        disabled={!bForm.nomenclature || !bForm.warehouse || !bForm.purchase_price || !bForm.quantity}>
-        <TextField label="Номенклатура" required select fullWidth value={bForm.nomenclature}
-          onChange={e => setBForm({ ...bForm, nomenclature: e.target.value })}>
-          {receiptNomenclatures.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
-        </TextField>
-        <TextField label="Склад" required select fullWidth value={bForm.warehouse}
-          onChange={e => setBForm({ ...bForm, warehouse: e.target.value })}>
-          {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
-        </TextField>
-        <TextField label="Поставщик" select fullWidth value={bForm.supplier}
-          onChange={e => setBForm({ ...bForm, supplier: e.target.value })}>
-          <MenuItem value="">— не выбран —</MenuItem>
-          {suppliers.map(s => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
-        </TextField>
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 6 }}>
-            <TextField label="Цена закупки" required type="number" fullWidth value={bForm.purchase_price}
-              onChange={e => setBForm({ ...bForm, purchase_price: e.target.value })} />
-          </Grid>
-          <Grid size={{ xs: 6 }}>
-            <TextField label="Количество" required type="number" fullWidth value={bForm.quantity}
-              onChange={e => setBForm({ ...bForm, quantity: e.target.value })} />
-          </Grid>
-        </Grid>
-        <TextField label="Остаток" type="number" fullWidth value={bForm.remaining}
-          onChange={e => setBForm({ ...bForm, remaining: e.target.value })} />
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 6 }}>
-            <TextField label="Дата поступления" type="date" fullWidth value={bForm.arrival_date}
-              onChange={e => setBForm({ ...bForm, arrival_date: e.target.value })}
-              slotProps={{ inputLabel: { shrink: true } }} />
-          </Grid>
-          <Grid size={{ xs: 6 }}>
-            <TextField label="Годен до" type="date" fullWidth value={bForm.expiry_date}
-              onChange={e => setBForm({ ...bForm, expiry_date: e.target.value })}
-              slotProps={{ inputLabel: { shrink: true } }} />
-          </Grid>
-        </Grid>
-        <TextField label="Номер накладной" fullWidth value={bForm.invoice_number}
-          onChange={e => setBForm({ ...bForm, invoice_number: e.target.value })} />
-        <TextField label="Примечания" fullWidth multiline rows={2} value={bForm.notes}
-          onChange={e => setBForm({ ...bForm, notes: e.target.value })} />
-      </EntityFormDialog>
-
       {/* ── Movement Dialog ── */}
       <EntityFormDialog open={mDlg} onClose={() => setMDlg(false)} onSubmit={saveM}
         title="Новое перемещение" submitText="Переместить"
@@ -892,9 +852,6 @@ export default function InventoryPage() {
         <TextField label="Примечания" fullWidth multiline rows={2} value={mForm.notes}
           onChange={e => setMForm({ ...mForm, notes: e.target.value })} />
       </EntityFormDialog>
-
-      {/* ── Confirm Dialogs ── */}
-      <ConfirmDialog open={!!delB} title="Удалить поступление?" message={`Удалить поступление "${delB?.nomenclature_name}"?`} onConfirm={removeB} onCancel={() => setDelB(null)} />
 
       {/* ── Assembly Dialog ── */}
       <Dialog open={asmDlg} onClose={() => setAsmDlg(false)} maxWidth="md" fullWidth>
@@ -948,13 +905,13 @@ export default function InventoryPage() {
           {/* Template select — только в режиме «По шаблону» */}
           {asmMode === 'template' && (
             <Autocomplete
-              options={bouquetNoms}
-              getOptionLabel={(option) => option.name}
-              value={bouquetNoms.find(n => n.id === asmForm.nomenclature_bouquet) || null}
-              onChange={(_, newValue) => handleAsmBouquetChange(newValue?.id || '')}
+              options={bouquetTemplates}
+              getOptionLabel={(option) => option.bouquet_name || allNom.find(n => n.id === option.nomenclature)?.name || '?'}
+              value={bouquetTemplates.find(t => t.nomenclature === asmForm.nomenclature_bouquet) || null}
+              onChange={(_, newValue) => handleAsmBouquetChange(newValue?.nomenclature || '')}
               renderInput={(params) => <TextField {...params} label="Шаблон букета" required fullWidth />}
               isOptionEqualToValue={(option, value) => option.id === value.id}
-              noOptionsText="Нет готовых шаблонов"
+              noOptionsText="Нет шаблонов букетов"
             />
           )}
 
@@ -1114,6 +1071,19 @@ export default function InventoryPage() {
                     </Button>
                   </Grid>
                 </Grid>
+              )}
+
+              {asmMode === 'individual' && (
+                <FormControlLabel
+                  sx={{ mt: 1 }}
+                  control={
+                    <Checkbox
+                      checked={asmForm.add_to_templates}
+                      onChange={e => setAsmForm(prev => ({ ...prev, add_to_templates: e.target.checked }))}
+                    />
+                  }
+                  label="Сохранить в шаблоны"
+                />
               )}
             </Box>
           )}
@@ -1335,6 +1305,132 @@ export default function InventoryPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* ═══ Bouquet Detail Dialog ═══ */}
+      <Dialog open={bouquetDetailDlg} onClose={() => setBouquetDetailDlg(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography variant="h6" fontWeight={700}>Просмотр букета</Typography>
+            <IconButton onClick={() => setBouquetDetailDlg(false)}><Close /></IconButton>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          {bouquetDetailLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress /></Box>
+          ) : bouquetDetail ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                {bouquetDetail.image && (
+                  <Avatar src={bouquetDetail.image} variant="rounded" sx={{ width: 120, height: 120 }} />
+                )}
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="h6" fontWeight={600}>{bouquetDetail.nomenclature_name}</Typography>
+                  <Typography variant="body2" color="text.secondary">Склад: {bouquetDetail.warehouse_name}</Typography>
+                  <Typography variant="body2" color="text.secondary">Кол-во: {fmtNum(bouquetDetail.quantity)}</Typography>
+                  {bouquetDetail.batch && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Дата сборки: {fmtDateTime(bouquetDetail.batch.created_at)}</Typography>
+                      <Typography variant="body2" color="text.secondary">Сборщик: {bouquetDetail.batch.assembler_name || '—'}</Typography>
+                      <Typography variant="body2" color="text.secondary">Цена продажи: {fmtNum(bouquetDetail.batch.selling_price || '0')} ₽</Typography>
+                    </>
+                  )}
+                </Box>
+              </Box>
+
+              {bouquetDetail.component_snapshots?.length > 0 && (
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>Фактический состав (снимок):</Typography>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Компонент</TableCell>
+                        <TableCell align="right">Кол-во</TableCell>
+                        <TableCell align="right">Цена закупа</TableCell>
+                        <TableCell>Склад</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {bouquetDetail.component_snapshots.map((c: any, i: number) => (
+                        <TableRow key={i}>
+                          <TableCell>{c.nomenclature_name}</TableCell>
+                          <TableCell align="right">{fmtNum(c.quantity)}</TableCell>
+                          <TableCell align="right">{fmtNum(c.purchase_price)} ₽</TableCell>
+                          <TableCell>{c.warehouse_name || '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Box>
+              )}
+
+              {bouquetDetail.template_components?.length > 0 && !bouquetDetail.component_snapshots?.length && (
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>Состав по шаблону:</Typography>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Компонент</TableCell>
+                        <TableCell align="right">Кол-во</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {bouquetDetail.template_components.map((c: any, i: number) => (
+                        <TableRow key={i}>
+                          <TableCell>{c.nomenclature_name}</TableCell>
+                          <TableCell align="right">{fmtNum(c.quantity)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Box>
+              )}
+            </Box>
+          ) : (
+            <Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>Нет данных</Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          {bouquetDetail && (
+            <Button
+              variant="outlined" color="warning" startIcon={<Tune fontSize="small" />}
+              onClick={() => {
+                setBouquetDetailDlg(false)
+                const tpl = bouquetTemplates.find(t => t.nomenclature === bouquetDetail.nomenclature)
+                const comps = bouquetDetail.component_snapshots?.length
+                  ? bouquetDetail.component_snapshots
+                  : (tpl?.components || [])
+                setCorrForm({ nomenclature_bouquet: bouquetDetail.nomenclature, warehouse: bouquetDetail.warehouse, selling_price: bouquetDetail.batch?.selling_price || allNom.find(n => n.id === bouquetDetail.nomenclature)?.retail_price || '' })
+                setCorrRows(comps
+                  .filter((c: any) => allNom.find(n => n.id === c.nomenclature)?.accounting_type !== 'service')
+                  .map((c: any) => ({
+                    nomenclature: c.nomenclature,
+                    name: c.nomenclature_name || allNom.find(n => n.id === c.nomenclature)?.name || '?',
+                    base_qty: c.quantity,
+                    writeoff_qty: '0',
+                    return_qty: c.quantity,
+                    add_qty: '0',
+                    reason: 'other',
+                    return_warehouse: bouquetDetail.warehouse,
+                    add_warehouse: '',
+                  })))
+                setCorrDlg(true)
+              }}
+            >
+              Коррекция
+            </Button>
+          )}
+          <Button onClick={() => setBouquetDetailDlg(false)}>Закрыть</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ═══ Stock Delete Confirm ═══ */}
+      <ConfirmDialog
+        open={!!deleteStockRow}
+        title="Удалить остаток?"
+        message={`Удалить остаток "${deleteStockRow?.nomenclature_name}" (${deleteStockRow?.warehouse_name})?`}
+        onConfirm={removeStockRow}
+        onCancel={() => setDeleteStockRow(null)}
+      />
 
       {/* ═══ Write-Off Dialog ═══ */}
       <EntityFormDialog
