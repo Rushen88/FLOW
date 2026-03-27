@@ -59,7 +59,7 @@ interface TreeData {
 
 // Price history record
 interface PriceHistoryRecord {
-  id: string; nomenclature: string; purchase_price: string; source: string; created_at: string
+  id: string; nomenclature: string; purchase_price: string; retail_price: string | null; source: string; created_at: string
 }
 
 const ACCOUNTING_TYPES = [
@@ -1271,19 +1271,29 @@ export default function NomenclaturePage() {
         </Grid>
 
         <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 1 }}>Компоненты букета</Typography>
-        {tplComponents.map((comp, idx) => (
+        {tplComponents.map((comp, idx) => {
+          const selectedNom = componentItems.find(n => n.id === comp.nomenclature) || null
+          return (
           <Grid container spacing={1} key={idx} alignItems="center">
-            <Grid size={{ xs: 6 }}>
-              <TextField label="Материал" required select fullWidth size="small" value={comp.nomenclature}
-                onChange={e => updateTplComponent(idx, 'nomenclature', e.target.value)}>
-                {componentItems.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
-              </TextField>
+            <Grid size={{ xs: 4 }}>
+              <Autocomplete size="small" options={componentItems}
+                getOptionLabel={(o) => o.name}
+                value={selectedNom}
+                onChange={(_, newValue) => updateTplComponent(idx, 'nomenclature', newValue ? newValue.id : '')}
+                renderInput={(params) => <TextField {...params} label="Материал" required fullWidth />}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
+                noOptionsText="Нет компонентов" />
             </Grid>
             <Grid size={{ xs: 2 }}>
               <TextField label="Кол-во" required type="number" fullWidth size="small" value={comp.quantity}
                 onChange={e => updateTplComponent(idx, 'quantity', e.target.value)} />
             </Grid>
-            <Grid size={{ xs: 3 }}>
+            <Grid size={{ xs: 2 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'right', pr: 1 }}>
+                {selectedNom ? `${selectedNom.retail_price} ₽` : '—'}
+              </Typography>
+            </Grid>
+            <Grid size={{ xs: 2 }}>
               <FormControlLabel
                 control={<Switch size="small" checked={comp.is_required}
                   onChange={e => updateTplComponent(idx, 'is_required', e.target.checked)} />}
@@ -1295,17 +1305,26 @@ export default function NomenclaturePage() {
               </IconButton>
             </Grid>
           </Grid>
-        ))}
+          )
+        })}
         <Button startIcon={<AddCircleOutline />} onClick={addTplComponent} size="small">
           Добавить компонент
         </Button>
         {tplComponents.length > 0 && (
+          <>
           <Typography variant="body2" sx={{ mt: 1, fontWeight: 500 }}>
             Расчётная себестоимость: {tplComponents.reduce((sum, c) => {
               const nom = items.find(i => i.id === c.nomenclature)
               return sum + (nom ? parseFloat(nom.purchase_price) * (parseFloat(c.quantity) || 0) : 0)
             }, 0).toFixed(2)} ₽
           </Typography>
+          <Typography variant="body2" sx={{ fontWeight: 500 }}>
+            Расчётная розничная: {tplComponents.reduce((sum, c) => {
+              const nom = items.find(i => i.id === c.nomenclature)
+              return sum + (nom ? parseFloat(nom.retail_price) * (parseFloat(c.quantity) || 0) : 0)
+            }, 0).toFixed(2)} ₽
+          </Typography>
+          </>
         )}
       </EntityFormDialog>
 
@@ -1430,14 +1449,15 @@ export default function NomenclaturePage() {
                 </Box>
               ) : priceHistory.length === 0 ? (
                 <Typography color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
-                  История закупочных цен отсутствует
+                  История изменения цен отсутствует. Цены записываются при редактировании позиции, быстром изменении цены и поступлениях.
                 </Typography>
               ) : (
                 <Table size="small">
                   <TableHead>
                     <TableRow>
                       <TableCell>Дата</TableCell>
-                      <TableCell align="right">Закупочная цена</TableCell>
+                      <TableCell align="right">Закупочная</TableCell>
+                      <TableCell align="right">Розничная</TableCell>
                       <TableCell>Источник</TableCell>
                     </TableRow>
                   </TableHead>
@@ -1446,11 +1466,12 @@ export default function NomenclaturePage() {
                       <TableRow key={record.id}>
                         <TableCell>{new Date(record.created_at).toLocaleString('ru-RU')}</TableCell>
                         <TableCell align="right">{record.purchase_price} ₽</TableCell>
+                        <TableCell align="right">{record.retail_price ? `${record.retail_price} ₽` : '—'}</TableCell>
                         <TableCell>
                           <Chip
-                            label={record.source === 'receipt' ? 'Поступление' : record.source === 'manual' ? 'Вручную' : record.source}
+                            label={record.source || 'Источник не указан'}
                             size="small" variant="outlined"
-                            color={record.source === 'receipt' ? 'success' : 'default'}
+                            color={record.source.startsWith('Приход') ? 'success' : 'default'}
                           />
                         </TableCell>
                       </TableRow>

@@ -147,5 +147,5 @@ class NomenclatureOptionSerializer(serializers.ModelSerializer):
 class PurchasePriceHistorySerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchasePriceHistory
-        fields = ['id', 'nomenclature', 'purchase_price', 'source', 'created_at']
+        fields = ['id', 'nomenclature', 'purchase_price', 'retail_price', 'source', 'created_at']
         read_only_fields = ['id', 'created_at']

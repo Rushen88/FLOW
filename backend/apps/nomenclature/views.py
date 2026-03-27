@@ -160,9 +160,24 @@ class NomenclatureViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Nomenclature.objects.select_related('group', 'unit')
         qs = _tenant_filter(qs, self.request.user)
-        if self.request.query_params.get('include_templates') != '1':
+        # Скрываем placeholder-позиции шаблонов только в списке
+        if self.action == 'list' and self.request.query_params.get('include_templates') != '1':
             qs = qs.filter(is_template_placeholder=False)
         return qs
+
+    def perform_update(self, serializer):
+        """При изменении цен — создаём запись в историю."""
+        instance = serializer.instance
+        old_pp = instance.purchase_price
+        old_rp = instance.retail_price
+        updated = serializer.save()
+        if updated.purchase_price != old_pp or updated.retail_price != old_rp:
+            PurchasePriceHistory.objects.create(
+                nomenclature=updated,
+                purchase_price=updated.purchase_price,
+                retail_price=updated.retail_price,
+                source='Ручное изменение',
+            )
 
     @action(detail=False, methods=['get'], pagination_class=None, url_path='options')
     def options(self, request):
@@ -184,8 +199,16 @@ class NomenclatureViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         retail = request.data.get('retail_price')
         if retail is not None:
             from decimal import Decimal
+            old_rp = nom.retail_price
             nom.retail_price = Decimal(str(retail))
             nom.save(update_fields=['retail_price'])
+            if nom.retail_price != old_rp:
+                PurchasePriceHistory.objects.create(
+                    nomenclature=nom,
+                    purchase_price=nom.purchase_price,
+                    retail_price=nom.retail_price,
+                    source='Быстрое изменение цены',
+                )
         return Response({'id': str(nom.id), 'retail_price': str(nom.retail_price)})
 
     @action(detail=True, methods=['patch'], url_path='move')

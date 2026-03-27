@@ -133,13 +133,14 @@ class Nomenclature(SoftDeletableModel):
 
 
 class PurchasePriceHistory(models.Model):
-    """История закупочных цен (формируется автоматически из поступлений)."""
+    """История цен номенклатуры (закупочная + розничная)."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nomenclature = models.ForeignKey(
         Nomenclature, on_delete=models.CASCADE,
         related_name='price_history', verbose_name='Номенклатура',
     )
     purchase_price = models.DecimalField('Закупочная цена', max_digits=12, decimal_places=2)
+    retail_price = models.DecimalField('Розничная цена', max_digits=12, decimal_places=2, null=True, blank=True)
     source = models.CharField('Источник', max_length=255, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
