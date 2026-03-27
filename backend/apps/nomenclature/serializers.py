@@ -1,4 +1,7 @@
 from rest_framework import serializers
+
+from apps.core.image_utils import compress_uploaded_image
+
 from .models import NomenclatureGroup, MeasureUnit, Nomenclature, BouquetTemplate, BouquetComponent, PurchasePriceHistory
 from apps.core.mixins import _resolve_org
 
@@ -41,7 +44,7 @@ class NomenclatureTreeItemSerializer(serializers.ModelSerializer):
     """Лёгкий сериализатор номенклатуры для дерева."""
     class Meta:
         model = Nomenclature
-        fields = ['id', 'name', 'nomenclature_type', 'accounting_type', 'sku', 'retail_price',
+        fields = ['id', 'name', 'accounting_type', 'sku', 'retail_price',
                   'purchase_price', 'is_active']
 
 
@@ -82,6 +85,9 @@ class BouquetComponentSerializer(serializers.ModelSerializer):
 class BouquetTemplateSerializer(serializers.ModelSerializer):
     components = BouquetComponentSerializer(many=True, read_only=True)
     bouquet_name = serializers.SerializerMethodField()
+    nomenclature_name = serializers.CharField(source='nomenclature.name', read_only=True, default='')
+    accounting_type = serializers.CharField(source='nomenclature.accounting_type', read_only=True, default='finished_bouquet')
+    retail_price = serializers.CharField(source='nomenclature.retail_price', read_only=True, default='0.00')
 
     class Meta:
         model = BouquetTemplate
@@ -91,6 +97,22 @@ class BouquetTemplateSerializer(serializers.ModelSerializer):
         if obj.bouquet_name:
             return obj.bouquet_name
         return obj.nomenclature.name if obj.nomenclature else ''
+
+    def create(self, validated_data):
+        image = validated_data.pop('image', None)
+        instance = super().create(validated_data)
+        if image:
+            instance.image.save(image.name, compress_uploaded_image(image), save=True)
+        return instance
+
+    def update(self, instance, validated_data):
+        image = validated_data.pop('image', None)
+        instance = super().update(instance, validated_data)
+        if image:
+            if instance.image:
+                instance.image.delete(save=False)
+            instance.image.save(image.name, compress_uploaded_image(image), save=True)
+        return instance
 
 
 class NomenclatureSerializer(serializers.ModelSerializer):
@@ -110,7 +132,7 @@ class NomenclatureListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Nomenclature
-        fields = ['id', 'name', 'nomenclature_type', 'accounting_type', 'sku', 'retail_price',
+        fields = ['id', 'name', 'accounting_type', 'sku', 'retail_price',
                   'purchase_price', 'image', 'group_name', 'is_active']
 
 
@@ -119,7 +141,7 @@ class NomenclatureOptionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Nomenclature
-        fields = ['id', 'name', 'nomenclature_type', 'accounting_type', 'purchase_price', 'retail_price', 'is_active']
+        fields = ['id', 'name', 'accounting_type', 'purchase_price', 'retail_price', 'is_active']
 
 
 class PurchasePriceHistorySerializer(serializers.ModelSerializer):

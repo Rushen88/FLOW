@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Box, Typography, Card, CardContent, TextField, MenuItem,
   IconButton, Button, Chip, Dialog, DialogTitle, DialogContent,
@@ -48,6 +48,18 @@ interface CartLine {
 
 interface CustomerRef { id: string; name: string; phone: string }
 interface PaymentMethodRef { id: string; name: string }
+interface BouquetSnapshot {
+  id: string
+  batch: string
+  nomenclature: string
+  nomenclature_name: string
+  accounting_type: string
+  quantity_per_unit: string
+  price_per_unit: string
+  sort_order: number
+  source_mode: string
+  created_at: string
+}
 
 const fmtPrice = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const SOURCE_ICONS: Record<string, React.ReactNode> = {
@@ -64,6 +76,9 @@ const SOURCE_COLORS: Record<string, 'default' | 'primary' | 'success' | 'warning
 export default function CashierPage() {
   const { user } = useAuth()
   const { notify } = useNotification()
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const feedRequestRef = useRef(0)
+  const checkoutRefsRequestRef = useRef<Promise<void> | null>(null)
 
   // ─── Categories ───
   const [categories, setCategories] = useState<SalesCategory[]>([])
@@ -72,10 +87,13 @@ export default function CashierPage() {
   // ─── Feed ───
   const [feed, setFeed] = useState<FeedItem[]>([])
   const [feedLoading, setFeedLoading] = useState(false)
+  const [searchInput, setSearchInput] = useState('')
   const [searchQ, setSearchQ] = useState('')
 
   // ─── Cart ───
   const [cart, setCart] = useState<CartLine[]>([])
+  const [snapshotMap, setSnapshotMap] = useState<Record<string, BouquetSnapshot[]>>({})
+  const [snapshotLoading, setSnapshotLoading] = useState<Record<string, boolean>>({})
 
   // ─── Checkout ───
   const [checkoutOpen, setCheckoutOpen] = useState(false)
@@ -88,6 +106,8 @@ export default function CashierPage() {
   // ─── Refs ───
   const [customers, setCustomers] = useState<CustomerRef[]>([])
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRef[]>([])
+  const [checkoutRefsLoading, setCheckoutRefsLoading] = useState(false)
+  const [checkoutRefsLoaded, setCheckoutRefsLoaded] = useState(false)
 
   // ═══ Fetch Categories ═══
   const fetchCategories = useCallback(() => {
@@ -97,36 +117,99 @@ export default function CashierPage() {
           .filter((c: SalesCategory) => c.is_visible_in_cashier)
           .sort((a: SalesCategory, b: SalesCategory) => a.sort_order - b.sort_order)
         setCategories(cats)
-        if (cats.length && !activeCat) setActiveCat(cats[0].id)
+        setActiveCat(prev => (prev && !cats.some((c: SalesCategory) => c.id === prev) ? '' : prev))
       })
       .catch(() => notify('Ошибка загрузки категорий', 'error'))
-  }, [notify, activeCat])
+  }, [notify])
 
   // ═══ Fetch Feed ═══
   const fetchFeed = useCallback(() => {
+    const requestId = ++feedRequestRef.current
     setFeedLoading(true)
     const params: Record<string, string> = {}
     if (activeCat) params.category_id = activeCat
     if (searchQ.trim()) params.q = searchQ.trim()
     api.get('/cashier/feed/', { params })
-      .then(res => setFeed(res.data || []))
-      .catch(() => setFeed([]))
-      .finally(() => setFeedLoading(false))
+      .then(res => {
+        if (requestId !== feedRequestRef.current) return
+        setFeed(res.data || [])
+      })
+      .catch(() => {
+        if (requestId !== feedRequestRef.current) return
+        setFeed([])
+      })
+      .finally(() => {
+        if (requestId === feedRequestRef.current) {
+          setFeedLoading(false)
+        }
+      })
   }, [activeCat, searchQ])
 
   // ═══ Fetch Refs ═══
-  const fetchRefs = useCallback(() => {
-    Promise.allSettled([
+  const fetchCheckoutRefs = useCallback(() => {
+    if (checkoutRefsLoaded) return Promise.resolve()
+    if (checkoutRefsRequestRef.current) return checkoutRefsRequestRef.current
+
+    setCheckoutRefsLoading(true)
+    const request = Promise.allSettled([
       api.get('/customers/customers/'),
       api.get('/core/payment-methods/'),
-    ]).then(([custRes, pmRes]) => {
-      if (custRes.status === 'fulfilled') setCustomers(custRes.value.data.results || custRes.value.data || [])
-      if (pmRes.status === 'fulfilled') setPaymentMethods(pmRes.value.data.results || pmRes.value.data || [])
-    })
+    ])
+      .then(([custRes, pmRes]) => {
+        if (custRes.status === 'fulfilled') setCustomers(custRes.value.data.results || custRes.value.data || [])
+        if (pmRes.status === 'fulfilled') setPaymentMethods(pmRes.value.data.results || pmRes.value.data || [])
+        if (custRes.status === 'fulfilled' || pmRes.status === 'fulfilled') {
+          setCheckoutRefsLoaded(true)
+        }
+      })
+      .finally(() => {
+        setCheckoutRefsLoading(false)
+        checkoutRefsRequestRef.current = null
+      })
+
+    checkoutRefsRequestRef.current = request
+    return request
+  }, [checkoutRefsLoaded])
+
+  useEffect(() => { fetchCategories() }, [fetchCategories])
+  useEffect(() => { fetchFeed() }, [fetchFeed])
+  useEffect(() => {
+    if (!checkoutOpen) return
+    void fetchCheckoutRefs()
+  }, [checkoutOpen, fetchCheckoutRefs])
+
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    searchDebounceRef.current = setTimeout(() => {
+      setSearchQ(searchInput)
+    }, 350)
+
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    }
+  }, [searchInput])
+
+  const fetchSnapshots = useCallback(async (batchId: string) => {
+    if (!batchId) return
+    setSnapshotLoading(prev => ({ ...prev, [batchId]: true }))
+    try {
+      const res = await api.get('/cashier/snapshots/', { params: { batch: batchId } })
+      setSnapshotMap(prev => ({ ...prev, [batchId]: res.data.results || res.data || [] }))
+    } catch {
+      setSnapshotMap(prev => ({ ...prev, [batchId]: [] }))
+    } finally {
+      setSnapshotLoading(prev => ({ ...prev, [batchId]: false }))
+    }
   }, [])
 
-  useEffect(() => { fetchCategories(); fetchRefs() }, [fetchCategories, fetchRefs])
-  useEffect(() => { fetchFeed() }, [fetchFeed])
+  useEffect(() => {
+    cart.forEach(line => {
+      if (!line.batch) return
+      if (!['ready_bouquet', 'reserve'].includes(line.source_mode)) return
+      if (snapshotMap[line.batch] || snapshotLoading[line.batch]) return
+      fetchSnapshots(line.batch)
+    })
+  }, [cart, snapshotMap, snapshotLoading, fetchSnapshots])
 
   // ═══ Cart Operations ═══
   const addToCart = (item: FeedItem) => {
@@ -169,6 +252,10 @@ export default function CashierPage() {
 
   const updateCartDiscount = (key: string, discount: number) => {
     setCart(prev => prev.map(c => c.key === key ? { ...c, discount_percent: Math.min(100, Math.max(0, discount)) } : c))
+  }
+
+  const updateCartPrice = (key: string, price: number) => {
+    setCart(prev => prev.map(c => c.key === key ? { ...c, price: Math.max(0, price) } : c))
   }
 
   const removeFromCart = (key: string) => {
@@ -222,14 +309,6 @@ export default function CashierPage() {
     setCheckoutSaving(false)
   }
 
-  // ═══ Debounced search ═══
-  const [searchTimer, setSearchTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
-  const handleSearch = (val: string) => {
-    setSearchQ(val)
-    if (searchTimer) clearTimeout(searchTimer)
-    setSearchTimer(setTimeout(() => {/* fetchFeed triggered by useEffect */}, 400))
-  }
-
   return (
     <Box sx={{ height: 'calc(100vh - 80px)', display: 'flex', gap: 2, p: 0 }}>
       {/* ════════════ LEFT: Catalog ════════════ */}
@@ -239,13 +318,17 @@ export default function CashierPage() {
           <TextField
             placeholder="Поиск по названию, артикулу, телефону..."
             size="small" fullWidth
-            value={searchQ}
-            onChange={e => handleSearch(e.target.value)}
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
             InputProps={{
               startAdornment: <InputAdornment position="start"><Search /></InputAdornment>,
-              endAdornment: searchQ ? (
+              endAdornment: searchInput ? (
                 <InputAdornment position="end">
-                  <IconButton size="small" onClick={() => { setSearchQ(''); }}><Close fontSize="small" /></IconButton>
+                  <IconButton size="small" onClick={() => {
+                    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+                    setSearchInput('')
+                    setSearchQ('')
+                  }}><Close fontSize="small" /></IconButton>
                 </InputAdornment>
               ) : null,
             }}
@@ -259,6 +342,7 @@ export default function CashierPage() {
           variant="scrollable" scrollButtons="auto"
           sx={{ mb: 1.5, minHeight: 40, '& .MuiTab-root': { minHeight: 40, py: 0.5, textTransform: 'none' } }}
         >
+          <Tab key="all" value="" label="Все" icon={<Search fontSize="small" />} iconPosition="start" />
           {categories.map(cat => (
             <Tab key={cat.id} value={cat.id}
               label={cat.name}
@@ -357,6 +441,9 @@ export default function CashierPage() {
           ) : (
             cart.map(line => (
               <Box key={line.key} sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+                {line.batch && snapshotLoading[line.batch] && (
+                  <Box display="flex" justifyContent="center" pb={1}><CircularProgress size={16} /></Box>
+                )}
                 <Box display="flex" gap={1} alignItems="flex-start">
                   {line.image ? (
                     <Avatar src={line.image} variant="rounded" sx={{ width: 44, height: 44 }} />
@@ -370,6 +457,15 @@ export default function CashierPage() {
                     <Typography variant="caption" color="text.secondary">
                       {fmtPrice(line.price)} ₽ / шт.
                     </Typography>
+                    {line.batch && (snapshotMap[line.batch] || []).length > 0 && (
+                      <Box sx={{ mt: 0.5 }}>
+                        {(snapshotMap[line.batch] || []).map(snapshot => (
+                          <Typography key={snapshot.id} variant="caption" display="block" color="text.secondary">
+                            {snapshot.nomenclature_name} x {fmtPrice(parseFloat(snapshot.quantity_per_unit) * line.quantity)}
+                          </Typography>
+                        ))}
+                      </Box>
+                    )}
                   </Box>
                   <IconButton size="small" onClick={() => removeFromCart(line.key)}>
                     <Delete fontSize="small" />
@@ -384,8 +480,14 @@ export default function CashierPage() {
                     <Add fontSize="small" />
                   </IconButton>
                   <TextField
+                    size="small" label="Цена" type="number"
+                    sx={{ width: 110, ml: 'auto' }}
+                    value={line.price || ''}
+                    onChange={e => updateCartPrice(line.key, parseFloat(e.target.value) || 0)}
+                  />
+                  <TextField
                     size="small" label="Скидка %" type="number"
-                    sx={{ width: 80, ml: 'auto' }}
+                    sx={{ width: 80 }}
                     value={line.discount_percent || ''}
                     inputProps={{ min: 0, max: 100 }}
                     onChange={e => updateCartDiscount(line.key, parseFloat(e.target.value) || 0)}
@@ -423,7 +525,10 @@ export default function CashierPage() {
             <Button
               variant="contained" fullWidth size="large"
               startIcon={<PointOfSale />}
-              onClick={() => setCheckoutOpen(true)}
+              onClick={() => {
+                setCheckoutOpen(true)
+                void fetchCheckoutRefs()
+              }}
               sx={{ fontWeight: 600, py: 1.2 }}
             >
               Оформить продажу
@@ -436,13 +541,21 @@ export default function CashierPage() {
       <Dialog open={checkoutOpen} onClose={() => setCheckoutOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Оформление продажи</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '8px !important' }}>
+          {checkoutRefsLoading && (
+            <Box display="flex" alignItems="center" gap={1} color="text.secondary">
+              <CircularProgress size={16} />
+              <Typography variant="caption">Загрузка клиентов и способов оплаты...</Typography>
+            </Box>
+          )}
           <TextField label="Клиент" select fullWidth value={selectedCustomer}
-            onChange={e => setSelectedCustomer(e.target.value)}>
+            onChange={e => setSelectedCustomer(e.target.value)}
+            disabled={checkoutRefsLoading}>
             <MenuItem value="">— без клиента —</MenuItem>
             {customers.map(c => <MenuItem key={c.id} value={c.id}>{c.name} {c.phone && `(${c.phone})`}</MenuItem>)}
           </TextField>
           <TextField label="Способ оплаты" select fullWidth value={selectedPayment}
-            onChange={e => setSelectedPayment(e.target.value)}>
+            onChange={e => setSelectedPayment(e.target.value)}
+            disabled={checkoutRefsLoading}>
             <MenuItem value="">— не указан —</MenuItem>
             {paymentMethods.map(pm => <MenuItem key={pm.id} value={pm.id}>{pm.name}</MenuItem>)}
           </TextField>

@@ -37,7 +37,7 @@ class SaleItemWriteSerializer(serializers.ModelSerializer):
 
 class SaleItemSerializer(serializers.ModelSerializer):
     nomenclature_name = serializers.CharField(source='nomenclature.name', read_only=True)
-    nomenclature_type = serializers.CharField(source='nomenclature.nomenclature_type', read_only=True)
+    accounting_type = serializers.CharField(source='nomenclature.accounting_type', read_only=True)
     warehouse_name = serializers.SerializerMethodField()
     warehouse = serializers.SerializerMethodField()
     bouquet_components = serializers.SerializerMethodField()
@@ -69,7 +69,7 @@ class SaleItemSerializer(serializers.ModelSerializer):
                 for comp in obj.components.select_related('nomenclature').all()
             ]
         nom = obj.nomenclature
-        if nom.nomenclature_type in ('bouquet', 'composition'):
+        if nom.accounting_type == 'finished_bouquet':
             try:
                 template = nom.bouquet_template
                 return [

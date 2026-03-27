@@ -2,6 +2,7 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
+from django.db import transaction as db_transaction
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from .models import (
@@ -303,6 +304,25 @@ class WarehouseViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         if tp:
             qs = qs.filter(trading_point_id=tp)
         return qs
+
+    def _sync_default_flags(self, warehouse):
+        for flag in ('is_default_for_receiving', 'is_default_for_bouquets', 'is_default_for_sales'):
+            if getattr(warehouse, flag):
+                Warehouse.objects.filter(
+                    organization=warehouse.organization,
+                    trading_point=warehouse.trading_point,
+                    **{flag: True},
+                ).exclude(pk=warehouse.pk).update(**{flag: False})
+
+    @db_transaction.atomic
+    def perform_create(self, serializer):
+        warehouse = serializer.save(organization=_resolve_org(self.request.user))
+        self._sync_default_flags(warehouse)
+
+    @db_transaction.atomic
+    def perform_update(self, serializer):
+        warehouse = serializer.save()
+        self._sync_default_flags(warehouse)
 
 
 class PaymentMethodViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):

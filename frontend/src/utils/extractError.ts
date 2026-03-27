@@ -28,7 +28,6 @@ const FIELD_LABELS: Record<string, string> = {
   employee: 'Сотрудник',
   customer: 'Клиент',
   supplier: 'Поставщик',
-  nomenclature_type: 'Тип номенклатуры',
   purchase_price: 'Закупочная цена',
   retail_price: 'Розничная цена',
   min_price: 'Минимальная цена',

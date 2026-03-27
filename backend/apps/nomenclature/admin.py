@@ -19,8 +19,8 @@ class MeasureUnitAdmin(admin.ModelAdmin):
 
 @admin.register(Nomenclature)
 class NomenclatureAdmin(admin.ModelAdmin):
-    list_display = ('name', 'nomenclature_type', 'sku', 'retail_price', 'is_active')
-    list_filter = ('nomenclature_type', 'group', 'is_active')
+    list_display = ('name', 'accounting_type', 'sku', 'retail_price', 'is_active')
+    list_filter = ('accounting_type', 'group', 'is_active')
     search_fields = ('name', 'sku', 'barcode')
 
 

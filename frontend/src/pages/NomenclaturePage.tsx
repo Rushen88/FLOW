@@ -1,14 +1,17 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, Fragment, useRef } from 'react'
 import {
   Box, Typography, TextField, Button, Tab, Tabs, IconButton,
   Chip, MenuItem, Switch, FormControlLabel, Card, CardContent,
-  Collapse, Tooltip, alpha,
+  Collapse, Tooltip, alpha, Autocomplete, Dialog, DialogTitle,
+  DialogContent, DialogActions, CircularProgress, InputAdornment,
+  Avatar, Table, TableBody, TableCell, TableHead, TableRow,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
 import {
   Add, Edit, Delete, Inventory, Straighten, AutoAwesome,
   AddCircleOutline, RemoveCircleOutline, FolderOpen, Folder,
-  ExpandMore, ChevronRight, CreateNewFolder, Search,
+  ExpandMore, ChevronRight, CreateNewFolder, Search, PhotoCamera,
+  History, Info, Close, Check, DragIndicator,
 } from '@mui/icons-material'
 import api from '../api'
 import { useNotification } from '../contexts/NotificationContext'
@@ -19,7 +22,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 
 // ─── Types ───
 interface NomItem {
-  id: string; organization: string; group: string | null; name: string; nomenclature_type: string
+  id: string; organization: string; group: string | null; name: string; accounting_type: string
   sku: string; barcode: string; unit: string | null; purchase_price: string; retail_price: string
   min_price: string; markup_percent: string; image: string | null; color: string; country: string
   stem_length: number | null; diameter: number | null; default_shelf_life_days: number | null
@@ -28,7 +31,7 @@ interface NomItem {
 interface NomGroup { id: string; organization: string; name: string; parent: string | null; children?: NomGroup[] }
 interface MeasureUnit { id: string; name: string; short_name: string }
 interface NomOption {
-  id: string; name: string; nomenclature_type: string
+  id: string; name: string; accounting_type: string
   purchase_price: string; retail_price: string; is_active: boolean
 }
 interface BouquetComponent {
@@ -38,11 +41,12 @@ interface BouquetComponent {
 interface BouquetTemplate {
   id: string; nomenclature: string; bouquet_name: string; assembly_time_minutes: number
   difficulty: number; description: string; components: BouquetComponent[]
+  image: string | null; nomenclature_name: string; accounting_type: string; retail_price: string
 }
 
 // Tree types from /groups/tree/ endpoint
 interface TreeItem {
-  id: string; name: string; nomenclature_type: string; accounting_type: string; sku: string
+  id: string; name: string; accounting_type: string; sku: string
   retail_price: string; purchase_price: string; is_active: boolean
 }
 interface TreeGroup {
@@ -53,57 +57,115 @@ interface TreeData {
   groups: TreeGroup[]; root_items: TreeItem[]
 }
 
-const NOM_TYPES = [
-  { value: 'single_flower', label: 'Цветок' },
-  { value: 'bouquet', label: 'Букет' },
-  { value: 'composition', label: 'Композиция' },
-  { value: 'packaging', label: 'Упаковка' },
-  { value: 'accessory', label: 'Аксессуар' },
-  { value: 'ribbon', label: 'Лента' },
-  { value: 'toy', label: 'Игрушка' },
-  { value: 'postcard', label: 'Открытка' },
-  { value: 'extra_good', label: 'Сопутствующий товар' },
-  { value: 'balloon', label: 'Шар' },
-  { value: 'pot_plant', label: 'Горшечное растение' },
-  { value: 'service', label: 'Услуга' },
-]
+// Price history record
+interface PriceHistoryRecord {
+  id: string; nomenclature: string; purchase_price: string; source: string; created_at: string
+}
 
 const ACCOUNTING_TYPES = [
-  { value: 'stock_material', label: 'Складской товар' },
-  { value: 'finished_bouquet', label: 'Готовый букет' },
-  { value: 'service', label: 'Услуга' },
+  { value: 'stock_material', label: 'Складской материал' },
+  { value: 'finished_bouquet', label: 'Готовые букеты' },
+  { value: 'service', label: 'Услуги' },
 ]
 
 const accountingTypeLabel = (v: string) => ACCOUNTING_TYPES.find(t => t.value === v)?.label || v
 
-const nomTypeLabel = (v: string) => NOM_TYPES.find(t => t.value === v)?.label || v
-
 const defaultItemForm = () => ({
-  name: '', nomenclature_type: 'single_flower', accounting_type: 'stock_material', group: '' as string, sku: '', barcode: '',
+  name: '', accounting_type: 'stock_material', group: '' as string, sku: '', barcode: '',
   unit: '' as string, purchase_price: '', retail_price: '', min_price: '', markup_percent: '',
   color: '', country: '', stem_length: '' as string | number, diameter: '' as string | number,
   default_shelf_life_days: '' as string | number, min_stock: '' as string | number, is_active: true, notes: '',
 })
 
 // ═══════════════════════════════════════════════════════════
+// Drag & Drop context
+// ═══════════════════════════════════════════════════════════
+interface DragState {
+  type: 'item' | 'group'
+  id: string
+  name: string
+}
+
+// ═══════════════════════════════════════════════════════════
+// Tree Header — column headers for items (prices etc.)
+// ═══════════════════════════════════════════════════════════
+function TreeHeader() {
+  return (
+    <Box
+      sx={{
+        display: 'flex', alignItems: 'center', gap: 0.5,
+        px: 1, py: 0.5,
+        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
+        borderBottom: '2px solid', borderColor: 'divider',
+        minHeight: 30, position: 'sticky', top: 0, zIndex: 2,
+      }}
+    >
+      <Box sx={{ width: 28 }} /> {/* drag handle placeholder */}
+      <Typography variant="caption" fontWeight={700} sx={{ flex: 1, pl: 1 }} color="text.secondary">
+        Название
+      </Typography>
+      <Typography variant="caption" fontWeight={700} sx={{ minWidth: 110, textAlign: 'center' }} color="text.secondary">
+        Тип учёта
+      </Typography>
+      <Typography variant="caption" fontWeight={700} sx={{ minWidth: 70, textAlign: 'right' }} color="text.secondary">
+        Закупочная
+      </Typography>
+      <Typography variant="caption" fontWeight={700} sx={{ minWidth: 70, textAlign: 'right' }} color="text.secondary">
+        Розничная
+      </Typography>
+      <Box sx={{ minWidth: 56 }} /> {/* actions placeholder */}
+    </Box>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════
 // Tree Row Component — recursive rendering of groups + items
 // ═══════════════════════════════════════════════════════════
-function TreeGroupRow({ group, depth, expanded, onToggle, selectedGroupId, onSelectGroup, onEditItem, onDeleteItem, onEditGroup, onDeleteGroup }: {
+function TreeGroupRow({ group, depth, expanded, onToggle, selectedGroupId, onSelectGroup, onEditItem, onDeleteItem, onEditGroup, onDeleteGroup, onOpenCard, onInlinePrice, dragState, onDragStart, onDrop, onDragExpandGroup }: {
   group: TreeGroup; depth: number
   expanded: Record<string, boolean>; onToggle: (id: string) => void
   selectedGroupId: string | null; onSelectGroup: (id: string | null) => void
   onEditItem: (id: string) => void; onDeleteItem: (id: string, name: string) => void
   onEditGroup: (id: string) => void; onDeleteGroup: (id: string, name: string) => void
+  onOpenCard?: (id: string) => void
+  onInlinePrice?: (id: string, currentPrice: string) => void
+  dragState: DragState | null
+  onDragStart: (state: DragState) => void
+  onDrop: (targetGroupId: string | null) => void
+  onDragExpandGroup: (groupId: string) => void
 }) {
   const isOpen = expanded[group.id] ?? false
   const isSelected = selectedGroupId === group.id
   const hasChildren = group.children.length > 0 || group.items.length > 0
+  const isDragTarget = dragState !== null && !(dragState.type === 'group' && dragState.id === group.id)
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
 
   return (
     <Fragment>
       {/* Group row */}
       <Box
         onClick={(e) => { e.stopPropagation(); onSelectGroup(isSelected ? null : group.id) }}
+        onDragOver={isDragTarget ? (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          ;(e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(25,118,210,0.10)'
+          if (!isOpen && hasChildren) {
+            if (!hoverTimerRef.current) {
+              hoverTimerRef.current = setTimeout(() => { onDragExpandGroup(group.id); hoverTimerRef.current = null }, 700)
+            }
+          }
+        } : undefined}
+        onDragLeave={isDragTarget ? (e) => {
+          ;(e.currentTarget as HTMLElement).style.backgroundColor = ''
+          if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null }
+        } : undefined}
+        onDrop={isDragTarget ? (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          ;(e.currentTarget as HTMLElement).style.backgroundColor = ''
+          if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null }
+          onDrop(group.id)
+        } : undefined}
         sx={{
           display: 'flex', alignItems: 'center', gap: 0.5,
           pl: depth * 3 + 0.5, pr: 1, py: 0.4,
@@ -112,6 +174,14 @@ function TreeGroupRow({ group, depth, expanded, onToggle, selectedGroupId, onSel
           '&:hover': { bgcolor: isSelected ? 'action.selected' : 'action.hover' },
           borderBottom: '1px solid', borderColor: 'divider',
           minHeight: 36,
+          transition: 'background-color 0.15s',
+        }}
+        draggable
+        onDragStart={(e) => {
+          e.stopPropagation()
+          onDragStart({ type: 'group', id: group.id, name: group.name })
+          e.dataTransfer.effectAllowed = 'move'
+          try { e.dataTransfer.setData('text/plain', group.id) } catch {}
         }}
       >
         <IconButton
@@ -139,47 +209,75 @@ function TreeGroupRow({ group, depth, expanded, onToggle, selectedGroupId, onSel
             selectedGroupId={selectedGroupId} onSelectGroup={onSelectGroup}
             onEditItem={onEditItem} onDeleteItem={onDeleteItem}
             onEditGroup={onEditGroup} onDeleteGroup={onDeleteGroup}
+            onOpenCard={onOpenCard} onInlinePrice={onInlinePrice}
+            dragState={dragState} onDragStart={onDragStart} onDrop={onDrop}
+            onDragExpandGroup={onDragExpandGroup}
           />
         ))}
         {group.items.map(item => (
           <TreeItemRow key={item.id} item={item} depth={depth + 1}
-            onEdit={onEditItem} onDelete={onDeleteItem} />
+            onEdit={onEditItem} onDelete={onDeleteItem}
+            onOpenCard={onOpenCard} onInlinePrice={onInlinePrice}
+            onDragStart={onDragStart} />
         ))}
       </Collapse>
     </Fragment>
   )
 }
 
-function TreeItemRow({ item, depth, onEdit, onDelete }: {
+function TreeItemRow({ item, depth, onEdit, onDelete, onOpenCard, onInlinePrice, onDragStart }: {
   item: TreeItem; depth: number
   onEdit: (id: string) => void; onDelete: (id: string, name: string) => void
+  onOpenCard?: (id: string) => void
+  onInlinePrice?: (id: string, currentPrice: string) => void
+  onDragStart: (state: DragState) => void
 }) {
   return (
     <Box
+      onClick={() => onOpenCard?.(item.id)}
+      draggable
+      onDragStart={(e) => {
+        e.stopPropagation()
+        onDragStart({ type: 'item', id: item.id, name: item.name })
+        e.dataTransfer.effectAllowed = 'move'
+        try { e.dataTransfer.setData('text/plain', item.id) } catch {}
+      }}
       sx={{
         display: 'flex', alignItems: 'center', gap: 0.5,
         pl: depth * 3 + 3.5, pr: 1, py: 0.3,
+        cursor: 'pointer',
         '&:hover': { bgcolor: 'action.hover' },
         borderBottom: '1px solid', borderColor: 'divider',
         minHeight: 32,
         opacity: item.is_active ? 1 : 0.5,
       }}
     >
+      <DragIndicator sx={{ fontSize: 14, color: 'text.disabled', cursor: 'grab', flexShrink: 0 }} />
       <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap>{item.name}</Typography>
-      <Chip label={nomTypeLabel(item.nomenclature_type)} size="small" variant="outlined"
-        sx={{ height: 20, fontSize: '0.65rem', flexShrink: 0 }} />
-      {item.accounting_type && item.accounting_type !== 'stock_material' && (
-        <Chip label={accountingTypeLabel(item.accounting_type)} size="small" color="info" variant="outlined"
-          sx={{ height: 20, fontSize: '0.6rem', flexShrink: 0 }} />
-      )}
-      {item.sku && (
-        <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0, mx: 0.5 }}>{item.sku}</Typography>
-      )}
-      <Typography variant="body2" sx={{ minWidth: 70, textAlign: 'right', flexShrink: 0 }}>
-        {item.retail_price && parseFloat(item.retail_price) > 0 ? `${item.retail_price} ₽` : '—'}
+      <Chip label={accountingTypeLabel(item.accounting_type)} size="small" variant="outlined"
+        color={item.accounting_type === 'service' ? 'secondary' : item.accounting_type === 'finished_bouquet' ? 'info' : 'default'}
+        sx={{ height: 20, fontSize: '0.6rem', flexShrink: 0, minWidth: 100, justifyContent: 'center' }} />
+      <Typography variant="caption" color="text.secondary" sx={{ minWidth: 70, textAlign: 'right', flexShrink: 0 }}>
+        {item.purchase_price && parseFloat(item.purchase_price) > 0 ? `${parseFloat(item.purchase_price).toFixed(0)} ₽` : '—'}
       </Typography>
+      <Tooltip title="Двойной клик — редактировать">
+        <Typography
+          variant="body2"
+          fontWeight={500}
+          color="primary"
+          onDoubleClick={(e) => { e.stopPropagation(); onInlinePrice?.(item.id, item.retail_price || '0') }}
+          sx={{
+            minWidth: 70, textAlign: 'right', flexShrink: 0,
+            px: 0.5, borderRadius: 0.5,
+            '&:hover': { bgcolor: 'action.selected', cursor: 'text' },
+          }}
+        >
+          {item.retail_price && parseFloat(item.retail_price) > 0 ? `${parseFloat(item.retail_price).toFixed(0)} ₽` : '—'}
+        </Typography>
+      </Tooltip>
       {!item.is_active && <Chip label="Неакт." size="small" color="default" sx={{ height: 18, fontSize: '0.6rem' }} />}
-      <Box sx={{ display: 'flex', ml: 0.5, opacity: 0.6, '&:hover': { opacity: 1 }, flexShrink: 0 }}>
+      <Box sx={{ display: 'flex', ml: 0.5, opacity: 0.6, '&:hover': { opacity: 1 }, flexShrink: 0 }}
+        onClick={e => e.stopPropagation()}>
         <Tooltip title="Редактировать"><IconButton size="small" sx={{ p: 0.25 }} onClick={() => onEdit(item.id)}><Edit sx={{ fontSize: 16 }} /></IconButton></Tooltip>
         <Tooltip title="Удалить"><IconButton size="small" sx={{ p: 0.25 }} onClick={() => onDelete(item.id, item.name)}><Delete sx={{ fontSize: 16 }} /></IconButton></Tooltip>
       </Box>
@@ -210,6 +308,8 @@ export default function NomenclaturePage() {
   // ─── All items (for forms / bouquet templates) ───
   const [items, setItems] = useState<NomOption[]>([])
 
+  // ─── Drag & Drop state ───
+  const [dragState, setDragState] = useState<DragState | null>(null)
   // ─── Item dialog ───
   const [itemDlg, setItemDlg] = useState(false)
   const [editItem, setEditItem] = useState<NomItem | null>(null)
@@ -217,6 +317,23 @@ export default function NomenclaturePage() {
   const [itemSaving, setItemSaving] = useState(false)
   const [delItemId, setDelItemId] = useState<string | null>(null)
   const [delItemName, setDelItemName] = useState('')
+
+  // ─── Item Card (detail view with tabs) ───
+  const [cardItem, setCardItem] = useState<NomItem | null>(null)
+  const [cardTab, setCardTab] = useState(0)
+  const [priceHistory, setPriceHistory] = useState<PriceHistoryRecord[]>([])
+  const [priceHistoryLoading, setPriceHistoryLoading] = useState(false)
+
+  // ─── Inline price editing ───
+  const [inlinePriceId, setInlinePriceId] = useState<string | null>(null)
+  const [inlinePriceValue, setInlinePriceValue] = useState('')
+  const [inlinePriceSaving, setInlinePriceSaving] = useState(false)
+  const inlinePriceRef = useRef<HTMLInputElement>(null)
+
+  // ─── Item image ───
+  const [itemImageFile, setItemImageFile] = useState<File | null>(null)
+  const [itemImagePreview, setItemImagePreview] = useState('')
+  const itemFileInputRef = useRef<HTMLInputElement>(null)
 
   const [grpDlg, setGrpDlg] = useState(false)
   const [editGrp, setEditGrp] = useState<NomGroup | null>(null)
@@ -238,10 +355,13 @@ export default function NomenclaturePage() {
   const [tplLoad, setTplLoad] = useState(false)
   const [tplDlg, setTplDlg] = useState(false)
   const [editTpl, setEditTpl] = useState<BouquetTemplate | null>(null)
-  const [tplForm, setTplForm] = useState({ nomenclature: '', bouquet_name: '', assembly_time_minutes: 15, difficulty: 3, description: '' })
+  const [tplForm, setTplForm] = useState({ nomenclature: '', bouquet_name: '', assembly_time_minutes: 15, difficulty: 3, description: '', retail_price: '' })
   const [tplComponents, setTplComponents] = useState<{ nomenclature: string; quantity: string; is_required: boolean }[]>([])
   const [tplSaving, setTplSaving] = useState(false)
   const [delTpl, setDelTpl] = useState<BouquetTemplate | null>(null)
+  const [tplImageFile, setTplImageFile] = useState<File | null>(null)
+  const [tplImagePreview, setTplImagePreview] = useState('')
+  const tplFileInputRef = useRef<HTMLInputElement>(null)
 
   // ─── Fetchers ───
   const fetchTree = useCallback(() => {
@@ -274,6 +394,103 @@ export default function NomenclaturePage() {
       .finally(() => setTplLoad(false))
   }, [notify])
 
+  // ─── Fetch price history for an item ───
+  const fetchPriceHistory = useCallback(async (itemId: string) => {
+    setPriceHistoryLoading(true)
+    try {
+      const res = await api.get(`/nomenclature/items/${itemId}/price-history/`)
+      setPriceHistory(res.data || [])
+    } catch {
+      notify('Ошибка загрузки истории цен', 'error')
+      setPriceHistory([])
+    } finally {
+      setPriceHistoryLoading(false)
+    }
+  }, [notify])
+
+  // ─── Open item card ───
+  const openItemCard = useCallback(async (id: string) => {
+    try {
+      const res = await api.get(`/nomenclature/items/${id}/`)
+      setCardItem(res.data)
+      setCardTab(0)
+      fetchPriceHistory(id)
+    } catch {
+      notify('Не удалось загрузить позицию', 'error')
+    }
+  }, [notify, fetchPriceHistory])
+
+  // ─── Inline price update ───
+  const startInlinePrice = (id: string, currentPrice: string) => {
+    setInlinePriceId(id)
+    setInlinePriceValue(currentPrice || '0')
+    setTimeout(() => inlinePriceRef.current?.select(), 50)
+  }
+
+  const saveInlinePrice = async () => {
+    if (!inlinePriceId) return
+    setInlinePriceSaving(true)
+    try {
+      await api.patch(`/nomenclature/items/${inlinePriceId}/update-price/`, {
+        retail_price: inlinePriceValue,
+      })
+      notify('Цена обновлена')
+      fetchTree()
+    } catch (err) {
+      notify(extractError(err, 'Ошибка обновления цены'), 'error')
+    } finally {
+      setInlinePriceSaving(false)
+      setInlinePriceId(null)
+    }
+  }
+
+  const cancelInlinePrice = () => {
+    setInlinePriceId(null)
+    setInlinePriceValue('')
+  }
+
+  const appendFormDataValue = (formData: FormData, key: string, value: unknown) => {
+    if (value === null || value === undefined) return
+    formData.append(key, String(value))
+  }
+
+  // ─── Item image handler ───
+  const handleItemImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setItemImageFile(file)
+    setItemImagePreview(URL.createObjectURL(file))
+  }
+
+  // ─── Template image handler ───
+  const handleTemplateImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setTplImageFile(file)
+    setTplImagePreview(URL.createObjectURL(file))
+  }
+
+  const closeItemDialog = () => {
+    setItemDlg(false)
+    setEditItem(null)
+    setItemImageFile(null)
+    setItemImagePreview('')
+    if (itemFileInputRef.current) itemFileInputRef.current.value = ''
+  }
+
+  const closeTplDialog = () => {
+    setTplDlg(false)
+    setEditTpl(null)
+    setTplImageFile(null)
+    setTplImagePreview('')
+    if (tplFileInputRef.current) tplFileInputRef.current.value = ''
+  }
+
+  // ─── Get default unit (шт.) ───
+  const getDefaultUnit = useCallback(() => {
+    return units.find(u => u.short_name === 'шт.' || u.short_name === 'шт' || u.name.toLowerCase() === 'штука')
+  }, [units])
+
   useEffect(() => { fetchTree() }, [fetchTree])
   useEffect(() => {
     if ((itemDlg || tab === 1) && units.length === 0 && !unitLoad) {
@@ -286,6 +503,20 @@ export default function NomenclaturePage() {
       fetchItems()
     }
   }, [tab, fetchTemplates, fetchItems])
+  useEffect(() => {
+    return () => {
+      if (itemImagePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(itemImagePreview)
+      }
+    }
+  }, [itemImagePreview])
+  useEffect(() => {
+    return () => {
+      if (tplImagePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(tplImagePreview)
+      }
+    }
+  }, [tplImagePreview])
 
   // ─── Flatten groups for selects ───
   const flatGroups = useMemo(() => {
@@ -356,16 +587,47 @@ export default function NomenclaturePage() {
 
   const collapseAll = () => setExpanded({})
 
+  // ─── Drag & Drop handlers ───
+  const handleDragStart = useCallback((state: DragState) => {
+    setDragState(state)
+  }, [])
+
+  const handleDrop = useCallback(async (targetGroupId: string | null) => {
+    if (!dragState) return
+    try {
+      if (dragState.type === 'item') {
+        await api.patch(`/nomenclature/items/${dragState.id}/move/`, { group: targetGroupId })
+        notify(`«${dragState.name}» перемещён`)
+      } else {
+        await api.patch(`/nomenclature/groups/${dragState.id}/move/`, { parent: targetGroupId })
+        notify(`Группа «${dragState.name}» перемещена`)
+      }
+      fetchTree()
+    } catch (err) {
+      notify(extractError(err, 'Ошибка перемещения'), 'error')
+    } finally {
+      setDragState(null)
+    }
+  }, [dragState, notify, fetchTree])
+
+  const handleDragExpandGroup = useCallback((groupId: string) => {
+    setExpanded(prev => ({ ...prev, [groupId]: true }))
+  }, [])
+
   // ─── Item CRUD ───
   const openItemDlg = (item?: NomItem) => {
     if (units.length === 0 && !unitLoad) {
       fetchUnits()
     }
 
+    setItemImageFile(null)
+    setItemImagePreview(item?.image || '')
+    if (itemFileInputRef.current) itemFileInputRef.current.value = ''
+
     if (item) {
       setEditItem(item)
       setItemForm({
-        name: item.name, nomenclature_type: item.nomenclature_type,
+        name: item.name,
         accounting_type: (item as any).accounting_type || 'stock_material',
         group: item.group || '', sku: item.sku || '', barcode: item.barcode || '',
         unit: item.unit || '', purchase_price: item.purchase_price || '',
@@ -380,6 +642,9 @@ export default function NomenclaturePage() {
       const form = defaultItemForm()
       // If a group is selected, pre-fill the group field
       if (selectedGroupId) form.group = selectedGroupId
+      // Set default unit to "шт." if available
+      const defaultUnit = getDefaultUnit()
+      if (defaultUnit) form.unit = defaultUnit.id
       setItemForm(form)
     }
     setItemDlg(true)
@@ -395,20 +660,36 @@ export default function NomenclaturePage() {
   const saveItem = async () => {
     setItemSaving(true)
     try {
-      const d: Record<string, any> = { ...itemForm }
-      if (!d.group) d.group = null
-      if (!d.unit) d.unit = null
-      if (d.stem_length === '') d.stem_length = null
-      if (d.diameter === '') d.diameter = null
-      if (d.default_shelf_life_days === '') d.default_shelf_life_days = null
-      if (d.min_stock === '' || d.min_stock === null) d.min_stock = 0
-      if (!d.purchase_price && d.purchase_price !== 0) d.purchase_price = '0.00'
-      if (!d.retail_price && d.retail_price !== 0) d.retail_price = '0.00'
-      if (!d.min_price && d.min_price !== 0) d.min_price = '0.00'
-      if (!d.markup_percent && d.markup_percent !== 0) d.markup_percent = '0.00'
-      if (editItem) { await api.patch(`/nomenclature/items/${editItem.id}/`, d); notify('Позиция обновлена') }
-      else { await api.post('/nomenclature/items/', d); notify('Позиция создана') }
-      setItemDlg(false); fetchTree(); fetchItems()
+      const payload: Record<string, unknown> = {
+        ...itemForm,
+        group: itemForm.group || null,
+        unit: itemForm.unit || null,
+        stem_length: itemForm.stem_length === '' ? null : itemForm.stem_length,
+        diameter: itemForm.diameter === '' ? null : itemForm.diameter,
+        default_shelf_life_days: itemForm.default_shelf_life_days === '' ? null : itemForm.default_shelf_life_days,
+        min_stock: itemForm.min_stock === '' || itemForm.min_stock === null ? 0 : itemForm.min_stock,
+        purchase_price: itemForm.purchase_price || '0.00',
+        retail_price: itemForm.retail_price || '0.00',
+        min_price: itemForm.min_price || '0.00',
+        markup_percent: itemForm.markup_percent || '0.00',
+      }
+
+      const formData = new FormData()
+      Object.entries(payload).forEach(([key, value]) => appendFormDataValue(formData, key, value))
+      if (itemImageFile) {
+        formData.append('image', itemImageFile)
+      }
+
+      const requestConfig = { headers: { 'Content-Type': 'multipart/form-data' } }
+      if (editItem) {
+        await api.patch(`/nomenclature/items/${editItem.id}/`, formData, requestConfig)
+        notify('Позиция обновлена')
+      } else {
+        await api.post('/nomenclature/items/', formData, requestConfig)
+        notify('Позиция создана')
+      }
+      closeItemDialog()
+      fetchTree(); fetchItems()
     } catch (err) { notify(extractError(err, 'Ошибка сохранения позиции'), 'error') }
     setItemSaving(false)
   }
@@ -502,22 +783,26 @@ export default function NomenclaturePage() {
   }
 
   // ─── Bouquet Template CRUD ───
-  const bouquetItems = items.filter(i => i.nomenclature_type === 'bouquet' || i.nomenclature_type === 'composition')
-  const componentItems = items.filter(i => i.nomenclature_type !== 'bouquet' && i.nomenclature_type !== 'composition')
+  const componentItems = items.filter(i => i.accounting_type !== 'finished_bouquet' && i.accounting_type !== 'service')
 
   const openTplDlg = (tpl?: BouquetTemplate) => {
     if (items.length === 0) {
       fetchItems()
     }
 
+    setTplImageFile(null)
+    setTplImagePreview(tpl?.image || '')
+    if (tplFileInputRef.current) tplFileInputRef.current.value = ''
+
     if (tpl) {
       setEditTpl(tpl)
       setTplForm({
         nomenclature: tpl.nomenclature,
-        bouquet_name: tpl.bouquet_name || '',
+        bouquet_name: tpl.bouquet_name || tpl.nomenclature_name || '',
         assembly_time_minutes: tpl.assembly_time_minutes,
         difficulty: tpl.difficulty,
         description: tpl.description || '',
+        retail_price: tpl.retail_price || '',
       })
       setTplComponents(tpl.components.map(c => ({
         nomenclature: c.nomenclature,
@@ -526,7 +811,7 @@ export default function NomenclaturePage() {
       })))
     } else {
       setEditTpl(null)
-      setTplForm({ nomenclature: '', bouquet_name: '', assembly_time_minutes: 15, difficulty: 3, description: '' })
+      setTplForm({ nomenclature: '', bouquet_name: '', assembly_time_minutes: 15, difficulty: 3, description: '', retail_price: '' })
       setTplComponents([{ nomenclature: '', quantity: '1', is_required: true }])
     }
     setTplDlg(true)
@@ -552,41 +837,72 @@ export default function NomenclaturePage() {
         return
       }
 
-      if (editTpl) {
-        await api.patch(`/nomenclature/bouquet-templates/${editTpl.id}/`, {
-          bouquet_name: tplForm.bouquet_name,
-          assembly_time_minutes: tplForm.assembly_time_minutes,
-          difficulty: tplForm.difficulty,
-          description: tplForm.description,
-        })
-        const oldComponents = editTpl.components || []
-        await Promise.all(oldComponents.map(c => api.delete(`/nomenclature/bouquet-components/${c.id}/`)))
+      const bouquetName = tplForm.bouquet_name.trim() || 'Новый букет'
+      const retailPrice = tplForm.retail_price || '0.00'
+
+      const saveComponents = async (templateId: string, previousComponents: BouquetComponent[] = []) => {
+        if (previousComponents.length) {
+          await Promise.all(previousComponents.map(c => api.delete(`/nomenclature/bouquet-components/${c.id}/`)))
+        }
         await Promise.all(validComponents.map(c =>
           api.post('/nomenclature/bouquet-components/', {
-            template: editTpl.id, nomenclature: c.nomenclature,
-            quantity: c.quantity, is_required: c.is_required,
+            template: templateId,
+            nomenclature: c.nomenclature,
+            quantity: c.quantity,
+            is_required: c.is_required,
           })
         ))
+      }
+
+      if (editTpl) {
+        await api.patch(`/nomenclature/items/${editTpl.nomenclature}/`, {
+          name: bouquetName,
+          retail_price: retailPrice,
+          is_active: true,
+          accounting_type: 'finished_bouquet',
+          is_template_placeholder: true,
+        })
+
+        const templateFormData = new FormData()
+        appendFormDataValue(templateFormData, 'bouquet_name', bouquetName)
+        appendFormDataValue(templateFormData, 'assembly_time_minutes', tplForm.assembly_time_minutes)
+        appendFormDataValue(templateFormData, 'difficulty', tplForm.difficulty)
+        appendFormDataValue(templateFormData, 'description', tplForm.description)
+        if (tplImageFile) {
+          templateFormData.append('image', tplImageFile)
+        }
+
+        await api.patch(`/nomenclature/bouquet-templates/${editTpl.id}/`, templateFormData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+        await saveComponents(editTpl.id, editTpl.components || [])
         notify('Шаблон обновлён')
       } else {
         const nomRes = await api.post('/nomenclature/items/', {
-          name: tplForm.bouquet_name || 'Новый букет',
-          nomenclature_type: 'bouquet', is_active: true,
+          name: bouquetName,
+          accounting_type: 'finished_bouquet',
+          retail_price: retailPrice,
+          is_active: true,
+          is_template_placeholder: true,
         })
-        const tplRes = await api.post('/nomenclature/bouquet-templates/', {
-          nomenclature: nomRes.data.id, bouquet_name: tplForm.bouquet_name,
-          assembly_time_minutes: tplForm.assembly_time_minutes,
-          difficulty: tplForm.difficulty, description: tplForm.description,
+
+        const templateFormData = new FormData()
+        appendFormDataValue(templateFormData, 'nomenclature', nomRes.data.id)
+        appendFormDataValue(templateFormData, 'bouquet_name', bouquetName)
+        appendFormDataValue(templateFormData, 'assembly_time_minutes', tplForm.assembly_time_minutes)
+        appendFormDataValue(templateFormData, 'difficulty', tplForm.difficulty)
+        appendFormDataValue(templateFormData, 'description', tplForm.description)
+        if (tplImageFile) {
+          templateFormData.append('image', tplImageFile)
+        }
+
+        const tplRes = await api.post('/nomenclature/bouquet-templates/', templateFormData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
         })
-        await Promise.all(validComponents.map(c =>
-          api.post('/nomenclature/bouquet-components/', {
-            template: tplRes.data.id, nomenclature: c.nomenclature,
-            quantity: c.quantity, is_required: c.is_required,
-          })
-        ))
+        await saveComponents(tplRes.data.id)
         notify('Шаблон создан')
       }
-      setTplDlg(false); fetchTemplates(); fetchItems(); fetchTree()
+      closeTplDialog(); fetchTemplates(); fetchItems(); fetchTree()
     } catch (err) { notify(extractError(err, 'Ошибка сохранения шаблона'), 'error') }
     setTplSaving(false)
   }
@@ -597,7 +913,7 @@ export default function NomenclaturePage() {
     catch (err) { notify(extractError(err, 'Ошибка удаления шаблона'), 'error') }
   }
 
-  const tplDisplayName = (tpl: BouquetTemplate) => tpl.bouquet_name || items.find(i => i.id === tpl.nomenclature)?.name || '—'
+  const tplDisplayName = (tpl: BouquetTemplate) => tpl.bouquet_name || tpl.nomenclature_name || '—'
 
   // Count total items in tree
   const totalCount = useMemo(() => {
@@ -667,11 +983,18 @@ export default function NomenclaturePage() {
               )}
 
               {/* Tree container */}
-              <Box sx={{
-                border: '1px solid', borderColor: 'divider', borderRadius: 1,
-                maxHeight: 'calc(100vh - 320px)', overflow: 'auto',
-                bgcolor: 'background.paper',
-              }}>
+              <Box
+                onDragOver={dragState ? (e) => { e.preventDefault() } : undefined}
+                onDrop={dragState ? (e) => {
+                  e.preventDefault()
+                  handleDrop(null)
+                } : undefined}
+                onDragEnd={() => setDragState(null)}
+                sx={{
+                  border: '1px solid', borderColor: 'divider', borderRadius: 1,
+                  maxHeight: 'calc(100vh - 320px)', overflow: 'auto',
+                  bgcolor: 'background.paper', position: 'relative',
+                }}>
                 {treeLoading ? (
                   <Box sx={{ p: 3, textAlign: 'center' }}>
                     <Typography color="text.secondary">Загрузка...</Typography>
@@ -684,6 +1007,7 @@ export default function NomenclaturePage() {
                   </Box>
                 ) : (
                   <>
+                    <TreeHeader />
                     {filteredTree.groups.map(group => (
                       <TreeGroupRow
                         key={group.id} group={group} depth={0}
@@ -691,12 +1015,22 @@ export default function NomenclaturePage() {
                         selectedGroupId={selectedGroupId} onSelectGroup={setSelectedGroupId}
                         onEditItem={openItemDlgById} onDeleteItem={confirmDeleteItem}
                         onEditGroup={openGrpDlgById} onDeleteGroup={confirmDeleteGroup}
+                        onOpenCard={openItemCard} onInlinePrice={startInlinePrice}
+                        dragState={dragState} onDragStart={handleDragStart} onDrop={handleDrop}
+                        onDragExpandGroup={handleDragExpandGroup}
                       />
                     ))}
                     {filteredTree.root_items.map(item => (
                       <TreeItemRow key={item.id} item={item} depth={0}
-                        onEdit={openItemDlgById} onDelete={confirmDeleteItem} />
+                        onEdit={openItemDlgById} onDelete={confirmDeleteItem}
+                        onOpenCard={openItemCard} onInlinePrice={startInlinePrice}
+                        onDragStart={handleDragStart} />
                     ))}
+                    {dragState && (
+                      <Box sx={{ p: 1.5, borderTop: '2px dashed', borderColor: 'primary.main', textAlign: 'center', bgcolor: alpha('#1976d2', 0.04) }}>
+                        <Typography variant="caption" color="primary">Перетащите сюда для перемещения в корень</Typography>
+                      </Box>
+                    )}
                   </>
                 )}
               </Box>
@@ -714,7 +1048,7 @@ export default function NomenclaturePage() {
                   <IconButton size="small" onClick={() => setDelUnit(row)}><Delete fontSize="small" /></IconButton>
                 </>) },
               ]}
-              rows={units} loading={unitLoad} emptyText="Нет единиц измерения"
+              rows={units} loading={unitLoad} emptyText="Нет единиц измерения" dense
               headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openUnitDlg()}>Добавить единицу</Button>}
             />
           )}
@@ -739,7 +1073,7 @@ export default function NomenclaturePage() {
                   <IconButton size="small" onClick={() => setDelTpl(row)}><Delete fontSize="small" /></IconButton>
                 </>) },
               ]}
-              rows={templates} loading={tplLoad} emptyText="Нет шаблонов букетов"
+              rows={templates} loading={tplLoad} emptyText="Нет шаблонов букетов" dense
               headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openTplDlg()}>Добавить шаблон</Button>}
             />
           )}
@@ -747,19 +1081,52 @@ export default function NomenclaturePage() {
       </Card>
 
       {/* ─── Item Dialog ─── */}
-      <EntityFormDialog open={itemDlg} onClose={() => setItemDlg(false)} onSubmit={saveItem}
+      <EntityFormDialog open={itemDlg} onClose={closeItemDialog} onSubmit={saveItem}
         title={editItem ? 'Редактировать позицию' : 'Новая позиция'} submitText={editItem ? 'Сохранить' : 'Создать'}
         loading={itemSaving} disabled={!itemForm.name} maxWidth="md">
         <Grid container spacing={2}>
-          <Grid size={{ xs: 12, md: 8 }}>
-            <TextField label="Название" required fullWidth value={itemForm.name}
-              onChange={e => setItemForm({ ...itemForm, name: e.target.value })} />
+          {/* Photo upload area */}
+          <Grid size={{ xs: 12, md: 3 }}>
+            <Box sx={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
+              p: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 1,
+              bgcolor: 'background.default', minHeight: 120,
+            }}>
+              {itemImagePreview ? (
+                <Avatar
+                  src={itemImagePreview}
+                  variant="rounded"
+                  sx={{ width: 80, height: 80 }}
+                />
+              ) : (
+                <PhotoCamera sx={{ fontSize: 40, color: 'text.disabled' }} />
+              )}
+              <input
+                ref={itemFileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleItemImageChange}
+              />
+              <Button
+                size="small" variant="outlined"
+                onClick={() => itemFileInputRef.current?.click()}
+                startIcon={<PhotoCamera />}
+              >
+                {itemImagePreview ? 'Изменить фото' : 'Выбрать фото'}
+              </Button>
+              <Typography variant="caption" color="text.secondary" align="center">
+                Фото сохранится вместе с карточкой позиции
+              </Typography>
+            </Box>
           </Grid>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <TextField label="Тип" required select fullWidth value={itemForm.nomenclature_type}
-              onChange={e => setItemForm({ ...itemForm, nomenclature_type: e.target.value })}>
-              {NOM_TYPES.map(t => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
-            </TextField>
+          <Grid size={{ xs: 12, md: 9 }}>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12 }}>
+                <TextField label="Название" required fullWidth value={itemForm.name}
+                  onChange={e => setItemForm({ ...itemForm, name: e.target.value })} />
+              </Grid>
+            </Grid>
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
             <TextField label="Тип учёта" select fullWidth value={itemForm.accounting_type}
@@ -767,19 +1134,26 @@ export default function NomenclaturePage() {
               {ACCOUNTING_TYPES.map(t => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
             </TextField>
           </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
+          <Grid size={{ xs: 12, md: 4 }}>
             <TextField label="Группа" select fullWidth value={itemForm.group}
               onChange={e => setItemForm({ ...itemForm, group: e.target.value })}>
               <MenuItem value="">Без группы</MenuItem>
               {flatGroups.map(g => <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>)}
             </TextField>
           </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="Единица измерения" select fullWidth value={itemForm.unit}
-              onChange={e => setItemForm({ ...itemForm, unit: e.target.value })}>
-              <MenuItem value="">Не указана</MenuItem>
-              {units.map(u => <MenuItem key={u.id} value={u.id}>{u.name} ({u.short_name})</MenuItem>)}
-            </TextField>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <Autocomplete
+              options={units}
+              getOptionLabel={(option) => `${option.name} (${option.short_name})`}
+              value={units.find(u => u.id === itemForm.unit) || null}
+              onChange={(_, newValue) => setItemForm({ ...itemForm, unit: newValue?.id || '' })}
+              renderInput={(params) => (
+                <TextField {...params} label="Единица измерения" placeholder="Поиск..." />
+              )}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              noOptionsText="Нет единиц"
+              loading={unitLoad}
+            />
           </Grid>
           <Grid size={{ xs: 12, md: 6 }}>
             <TextField label="Артикул (SKU)" fullWidth value={itemForm.sku}
@@ -843,15 +1217,43 @@ export default function NomenclaturePage() {
       </EntityFormDialog>
 
       {/* ─── Bouquet Template Dialog ─── */}
-      <EntityFormDialog open={tplDlg} onClose={() => setTplDlg(false)} onSubmit={saveTpl}
+      <EntityFormDialog open={tplDlg} onClose={closeTplDialog} onSubmit={saveTpl}
         title={editTpl ? 'Редактировать шаблон букета' : 'Новый шаблон букета'}
         submitText={editTpl ? 'Сохранить' : 'Создать'}
         loading={tplSaving} disabled={!tplForm.bouquet_name || tplComponents.length === 0} maxWidth="md">
         <Grid container spacing={2}>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="Букет (наименование)" required fullWidth value={tplForm.bouquet_name} disabled={!!editTpl} onChange={e => setTplForm({ ...tplForm, bouquet_name: e.target.value })} />
+          <Grid size={{ xs: 12, md: 3 }}>
+            <Box sx={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
+              p: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 1,
+              bgcolor: 'background.default', minHeight: 140,
+            }}>
+              {tplImagePreview ? (
+                <Avatar src={tplImagePreview} variant="rounded" sx={{ width: 88, height: 88 }} />
+              ) : (
+                <AutoAwesome sx={{ fontSize: 42, color: 'text.disabled' }} />
+              )}
+              <input
+                ref={tplFileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleTemplateImageChange}
+              />
+              <Button size="small" variant="outlined" startIcon={<PhotoCamera />} onClick={() => tplFileInputRef.current?.click()}>
+                {tplImagePreview ? 'Изменить фото' : 'Выбрать фото'}
+              </Button>
+            </Box>
           </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
+          <Grid size={{ xs: 12, md: 5 }}>
+            <TextField label="Букет (наименование)" required fullWidth value={tplForm.bouquet_name}
+              onChange={e => setTplForm({ ...tplForm, bouquet_name: e.target.value })} />
+          </Grid>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <TextField label="Цена продажи" type="number" fullWidth value={tplForm.retail_price}
+              onChange={e => setTplForm({ ...tplForm, retail_price: e.target.value })} />
+          </Grid>
+          <Grid size={{ xs: 12, md: 9 }}>
             <TextField label="Описание" fullWidth value={tplForm.description}
               onChange={e => setTplForm({ ...tplForm, description: e.target.value })} />
           </Grid>
@@ -940,6 +1342,168 @@ export default function NomenclaturePage() {
         onConfirm={removeUnit} onCancel={() => setDelUnit(null)} />
       <ConfirmDialog open={!!delTpl} title="Удалить шаблон?" message={`Удалить шаблон букета?`}
         onConfirm={removeTpl} onCancel={() => setDelTpl(null)} />
+
+      {/* ─── Item Card Dialog (detail view with tabs) ─── */}
+      <Dialog open={!!cardItem} onClose={() => setCardItem(null)} maxWidth="md" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {cardItem?.image && (
+            <Avatar src={cardItem.image} variant="rounded" sx={{ width: 48, height: 48 }} />
+          )}
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="h6">{cardItem?.name || ''}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {cardItem?.sku ? `Артикул: ${cardItem.sku}` : ''}
+              {cardItem?.sku && cardItem?.barcode ? ' • ' : ''}
+              {cardItem?.barcode ? `Штрих-код: ${cardItem.barcode}` : ''}
+            </Typography>
+          </Box>
+          <IconButton onClick={() => setCardItem(null)}><Close /></IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Tabs value={cardTab} onChange={(_, v) => setCardTab(v)} sx={{ mb: 2 }}>
+            <Tab icon={<Info />} iconPosition="start" label="Основная информация" />
+            <Tab icon={<History />} iconPosition="start" label="История цен" />
+          </Tabs>
+
+          {cardTab === 0 && cardItem && (
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <Typography variant="caption" color="text.secondary">Тип учёта</Typography>
+                <Typography>{accountingTypeLabel(cardItem.accounting_type || 'stock_material')}</Typography>
+              </Grid>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <Typography variant="caption" color="text.secondary">Группа</Typography>
+                <Typography>{cardItem.group_name || 'Без группы'}</Typography>
+              </Grid>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <Typography variant="caption" color="text.secondary">Единица измерения</Typography>
+                <Typography>{cardItem.unit_name || '—'}</Typography>
+              </Grid>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <Typography variant="caption" color="text.secondary">Закупочная цена</Typography>
+                <Typography fontWeight={500}>{cardItem.purchase_price ? `${cardItem.purchase_price} ₽` : '—'}</Typography>
+              </Grid>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <Typography variant="caption" color="text.secondary">Розничная цена</Typography>
+                <Typography fontWeight={500} color="primary">{cardItem.retail_price ? `${cardItem.retail_price} ₽` : '—'}</Typography>
+              </Grid>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <Typography variant="caption" color="text.secondary">Минимальная цена</Typography>
+                <Typography>{cardItem.min_price ? `${cardItem.min_price} ₽` : '—'}</Typography>
+              </Grid>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <Typography variant="caption" color="text.secondary">Наценка</Typography>
+                <Typography>{cardItem.markup_percent ? `${cardItem.markup_percent}%` : '—'}</Typography>
+              </Grid>
+              {cardItem.color && (
+                <Grid size={{ xs: 6, md: 3 }}>
+                  <Typography variant="caption" color="text.secondary">Цвет</Typography>
+                  <Typography>{cardItem.color}</Typography>
+                </Grid>
+              )}
+              {cardItem.country && (
+                <Grid size={{ xs: 6, md: 3 }}>
+                  <Typography variant="caption" color="text.secondary">Страна</Typography>
+                  <Typography>{cardItem.country}</Typography>
+                </Grid>
+              )}
+              {cardItem.stem_length && (
+                <Grid size={{ xs: 6, md: 3 }}>
+                  <Typography variant="caption" color="text.secondary">Ростовка</Typography>
+                  <Typography>{cardItem.stem_length} см</Typography>
+                </Grid>
+              )}
+              {cardItem.notes && (
+                <Grid size={{ xs: 12 }}>
+                  <Typography variant="caption" color="text.secondary">Примечания</Typography>
+                  <Typography>{cardItem.notes}</Typography>
+                </Grid>
+              )}
+            </Grid>
+          )}
+
+          {cardTab === 1 && (
+            <Box>
+              {priceHistoryLoading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : priceHistory.length === 0 ? (
+                <Typography color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
+                  История закупочных цен отсутствует
+                </Typography>
+              ) : (
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Дата</TableCell>
+                      <TableCell align="right">Закупочная цена</TableCell>
+                      <TableCell>Источник</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {priceHistory.map((record) => (
+                      <TableRow key={record.id}>
+                        <TableCell>{new Date(record.created_at).toLocaleString('ru-RU')}</TableCell>
+                        <TableCell align="right">{record.purchase_price} ₽</TableCell>
+                        <TableCell>
+                          <Chip
+                            label={record.source === 'receipt' ? 'Поступление' : record.source === 'manual' ? 'Вручную' : record.source}
+                            size="small" variant="outlined"
+                            color={record.source === 'receipt' ? 'success' : 'default'}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setCardItem(null); openItemDlg(cardItem!) }} startIcon={<Edit />}>
+            Редактировать
+          </Button>
+          <Button onClick={() => setCardItem(null)}>Закрыть</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ─── Inline Price Editor Dialog ─── */}
+      <Dialog open={!!inlinePriceId} onClose={cancelInlinePrice} maxWidth="xs">
+        <DialogTitle>Изменить розничную цену</DialogTitle>
+        <DialogContent>
+          <TextField
+            inputRef={inlinePriceRef}
+            type="number"
+            label="Розничная цена"
+            fullWidth
+            value={inlinePriceValue}
+            onChange={(e) => setInlinePriceValue(e.target.value)}
+            slotProps={{
+              input: {
+                endAdornment: <InputAdornment position="end">₽</InputAdornment>,
+              },
+            }}
+            sx={{ mt: 1 }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') saveInlinePrice()
+              if (e.key === 'Escape') cancelInlinePrice()
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={cancelInlinePrice}>Отмена</Button>
+          <Button
+            variant="contained"
+            onClick={saveInlinePrice}
+            disabled={inlinePriceSaving}
+            startIcon={inlinePriceSaving ? <CircularProgress size={16} /> : <Check />}
+          >
+            Сохранить
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

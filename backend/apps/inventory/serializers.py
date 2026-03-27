@@ -1,3 +1,4 @@
+from django.db.models import Max
 from rest_framework import serializers
 from .models import (
     Batch, StockBalance, StockMovement, InventoryDocument, InventoryItem,
@@ -11,7 +12,7 @@ class BatchSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source='supplier.name', read_only=True, default='')
 
     def validate_nomenclature(self, value):
-        if getattr(value, 'nomenclature_type', '') == 'service':
+        if getattr(value, 'accounting_type', '') == 'service':
             raise serializers.ValidationError('Услуги нельзя проводить через поступления.')
         return value
 
@@ -37,7 +38,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
     warehouse_to_name = serializers.CharField(source='warehouse_to.name', read_only=True, default='')
 
     def validate_nomenclature(self, value):
-        if getattr(value, 'nomenclature_type', '') == 'service':
+        if getattr(value, 'accounting_type', '') == 'service':
             raise serializers.ValidationError('Услуги не участвуют в складском учёте.')
         return value
 
@@ -90,9 +91,17 @@ class ReceiptDocumentSerializer(serializers.ModelSerializer):
         model = ReceiptDocument
         fields = '__all__'
         read_only_fields = ['organization', 'total_cost', 'created_by']
+        extra_kwargs = {
+            'number': {'required': False},
+        }
+
+    def _next_number(self, organization):
+        return (ReceiptDocument.objects.filter(organization=organization).aggregate(mx=Max('number'))['mx'] or 0) + 1
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
+        if not validated_data.get('number'):
+            validated_data['number'] = self._next_number(validated_data['organization'])
         doc = ReceiptDocument.objects.create(**validated_data)
         for item_data in items_data:
             ReceiptDocumentItem.objects.create(document=doc, **item_data)

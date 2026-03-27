@@ -36,6 +36,7 @@ class Batch(models.Model):
     expiry_date = models.DateField('Годен до', null=True, blank=True)
     invoice_number = models.CharField('Номер накладной', max_length=100, blank=True, default='')
     is_assembly = models.BooleanField('Сборка букета', default=False)
+    image = models.ImageField('Фото витринного букета', upload_to='bouquet_batches/', blank=True, null=True)
     notes = models.TextField('Примечания', blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -62,6 +63,11 @@ class Batch(models.Model):
 
     def __str__(self):
         return f'{self.nomenclature.name} — {self.quantity} ({self.arrival_date})'
+
+    def delete(self, *args, **kwargs):
+        if self.image:
+            self.image.delete(save=False)
+        super().delete(*args, **kwargs)
 
 
 class ReceiptDocument(models.Model):

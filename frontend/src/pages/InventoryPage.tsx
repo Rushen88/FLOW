@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Box, Typography, Tab, Tabs, Card, CardContent, Chip,
   TextField, MenuItem, IconButton, Button, Dialog, DialogTitle, DialogContent, DialogActions,
-  ToggleButtonGroup, ToggleButton, Tooltip,
+  ToggleButtonGroup, ToggleButton, Tooltip, Autocomplete, Avatar,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
 import { Add, Edit, Delete, Inventory2, LocalShipping, SwapHoriz, RemoveCircleOutline, AutoAwesome, CallSplit, AutoFixHigh, ListAlt, Tune, Description, PlayArrow } from '@mui/icons-material'
@@ -34,11 +34,19 @@ interface StockMovement {
   notes: string; created_at: string; nomenclature_name: string
 }
 interface Ref { id: string; name: string }
-interface WarehouseRef extends Ref { trading_point?: string | null; is_default_for_sales?: boolean }
-interface NomRef { id: string; name: string; nomenclature_type: string; purchase_price: string; retail_price: string }
+interface WarehouseRef extends Ref {
+  trading_point?: string | null
+  is_default_for_sales?: boolean
+  is_default_for_receiving?: boolean
+  is_default_for_bouquets?: boolean
+}
+interface NomRef {
+  id: string; name: string; accounting_type: string; purchase_price: string; retail_price: string
+  image?: string | null
+}
 interface BouquetComponent { nomenclature: string; quantity: string; nomenclature_name: string }
 interface BouquetTemplateRef {
-  id: string; nomenclature: string; components: BouquetComponent[]
+  id: string; nomenclature: string; bouquet_name?: string; image?: string | null; components: BouquetComponent[]
 }
 interface UserRef { id: string; full_name?: string; username: string }
 
@@ -80,6 +88,14 @@ export default function InventoryPage() {
   const [users, setUsers] = useState<UserRef[]>([])
   const [stockSummary, setStockSummary] = useState<any[]>([])
 
+  const fetchStockSummary = useCallback(async () => {
+    const effectiveTp = user?.active_trading_point || user?.trading_point || null
+    const summaryRes = await api.get('/inventory/stock/summary/', {
+      params: effectiveTp ? { trading_point: effectiveTp } : undefined,
+    }).catch(() => ({ data: [] }))
+    setStockSummary(summaryRes.data.results || summaryRes.data || [])
+  }, [user?.active_trading_point, user?.trading_point])
+
   const fetchHelpers = useCallback(async () => {
     try {
       const [whRes, nomRes, supRes, tplRes, usersRes] = await Promise.all([
@@ -88,6 +104,7 @@ export default function InventoryPage() {
         api.get('/suppliers/suppliers/'),
         api.get('/nomenclature/bouquet-templates/'),
         api.get('/core/users/').catch(() => ({ data: [] })),
+        fetchStockSummary(),
       ])
 
       setWarehouses(whRes.data.results || whRes.data || [])
@@ -97,20 +114,24 @@ export default function InventoryPage() {
       setSuppliers(supRes.data.results || supRes.data || [])
       setBouquetTemplates(tplRes.data.results || tplRes.data || [])
       setUsers(usersRes.data.results || usersRes.data || [])
-
-      const effectiveTp = user?.active_trading_point || user?.trading_point || null
-      const summaryRes = await api.get('/inventory/stock/summary/', {
-        params: effectiveTp ? { trading_point: effectiveTp } : undefined,
-      }).catch(() => ({ data: [] }))
-      setStockSummary(summaryRes.data.results || summaryRes.data || [])
     } catch (err) { notify(extractError(err, 'Ошибка загрузки справочников'), 'error') }
-  }, [notify, user?.id, user?.active_trading_point, user?.trading_point])
+  }, [fetchStockSummary, notify])
 
   useEffect(() => { fetchHelpers() }, [fetchHelpers])
 
   const scopedWarehouses = (user?.active_trading_point || user?.trading_point)
     ? warehouses.filter(w => w.trading_point === (user?.active_trading_point || user?.trading_point))
     : warehouses
+
+  const defaultReceivingWarehouseId = useMemo(() => {
+    return scopedWarehouses.find(w => w.is_default_for_receiving)?.id
+      || (scopedWarehouses.length === 1 ? scopedWarehouses[0].id : '')
+  }, [scopedWarehouses])
+
+  const defaultBouquetWarehouseId = useMemo(() => {
+    return scopedWarehouses.find(w => w.is_default_for_bouquets)?.id
+      || (scopedWarehouses.length === 1 ? scopedWarehouses[0].id : '')
+  }, [scopedWarehouses])
 
   // ═══════════════════════════════════════════
   // Tab 0 — Остатки (read-only)
@@ -151,7 +172,7 @@ export default function InventoryPage() {
       .finally(() => setBLoad(false))
   }, [notify])
 
-  useEffect(() => { if (tab === 1) fetchBatches() }, [tab, fetchBatches])
+  useEffect(() => { if (tab === 3) fetchBatches() }, [tab, fetchBatches])
 
   const openBDlg = (b?: Batch) => {
     if (b) {
@@ -191,14 +212,14 @@ export default function InventoryPage() {
   const [mLoad, setMLoad] = useState(false)
   const [mDlg, setMDlg] = useState(false)
   const [editM, setEditM] = useState<StockMovement | null>(null)
-  const [mForm, setMForm] = useState({ nomenclature: '', movement_type: 'receipt', warehouse_from: '', warehouse_to: '', quantity: '', price: '', write_off_reason: '', notes: '' })
+  const [mForm, setMForm] = useState({ nomenclature: '', movement_type: 'transfer', warehouse_from: '', warehouse_to: '', quantity: '', price: '', write_off_reason: '', notes: '' })
   const [delM, setDelM] = useState<StockMovement | null>(null)
 
   const fetchMoves = useCallback(() => {
     setMLoad(true)
-    api.get('/inventory/movements/')
+    api.get('/inventory/movements/', { params: { movement_type: 'transfer' } })
       .then(res => setMoves(res.data.results || res.data || []))
-      .catch(() => { setMoves([]); notify('Ошибка загрузки движений', 'error') })
+      .catch(() => { setMoves([]); notify('Ошибка загрузки перемещений', 'error') })
       .finally(() => setMLoad(false))
   }, [notify])
 
@@ -214,22 +235,32 @@ export default function InventoryPage() {
         write_off_reason: m.write_off_reason || '', notes: m.notes || '',
       })
     } else {
+      const fallbackFrom = defaultReceivingWarehouseId || scopedWarehouses[0]?.id || ''
+      const fallbackTo = scopedWarehouses.find(w => w.id !== fallbackFrom)?.id || ''
       setEditM(null)
-      setMForm({ nomenclature: '', movement_type: 'receipt', warehouse_from: '', warehouse_to: '', quantity: '', price: '', write_off_reason: '', notes: '' })
+      setMForm({ nomenclature: '', movement_type: 'transfer', warehouse_from: fallbackFrom, warehouse_to: fallbackTo, quantity: '', price: '', write_off_reason: '', notes: '' })
     }
     setMDlg(true)
   }
 
   const saveM = async () => {
     try {
-      const d = {
-        ...mForm,
-        warehouse_from: mForm.warehouse_from || null,
-        warehouse_to: mForm.warehouse_to || null,
-        write_off_reason: mForm.movement_type === 'write_off' ? mForm.write_off_reason : '',
+      if (!mForm.warehouse_from || !mForm.warehouse_to) {
+        notify('Укажите склад-источник и склад-получатель', 'error')
+        return
       }
-      if (editM) { await api.patch(`/inventory/movements/${editM.id}/`, d); notify('Движение обновлено') }
-      else { await api.post('/inventory/movements/', d); notify('Движение создано') }
+      if (mForm.warehouse_from === mForm.warehouse_to) {
+        notify('Склады перемещения должны отличаться', 'error')
+        return
+      }
+      await api.post('/inventory/movements/transfer/', {
+        nomenclature: mForm.nomenclature,
+        warehouse_from: mForm.warehouse_from,
+        warehouse_to: mForm.warehouse_to,
+        quantity: mForm.quantity,
+        notes: mForm.notes,
+      })
+      notify('Перемещение создано')
       setMDlg(false); fetchMoves()
     } catch (err) { notify(extractError(err, 'Ошибка сохранения'), 'error') }
   }
@@ -251,16 +282,19 @@ export default function InventoryPage() {
   // Assembly / Disassembly
   // ═══════════════════════════════════════════
   const [asmDlg, setAsmDlg] = useState(false)
-  const [asmMode, setAsmMode] = useState<'template' | 'individual'>('template')
+  const [asmMode, setAsmMode] = useState<'template' | 'individual'>('individual')
   const [asmForm, setAsmForm] = useState({ nomenclature_bouquet: '', warehouse_to: '', quantity: '1', assembler: '', add_to_templates: false, bouquet_name: '', selling_price: '' })
   const [asmComponents, setAsmComponents] = useState<(BouquetComponent & { warehouse?: string; is_required?: boolean; base_qty?: string })[]>([])
   const [asmCustom, setAsmCustom] = useState(false)
   const [asmSaving, setAsmSaving] = useState(false)
+  const [asmImageFile, setAsmImageFile] = useState<File | null>(null)
+  const [asmImagePreview, setAsmImagePreview] = useState('')
+  const asmImageInputRef = useRef<HTMLInputElement>(null)
 
-  const componentNoms = allNom.filter(n => n.nomenclature_type !== 'bouquet' && n.nomenclature_type !== 'composition')
+  const componentNoms = allNom.filter(n => n.accounting_type !== 'finished_bouquet')
   const receiptNomenclatures = nomenclatures.filter(n => {
     const nom = allNom.find(x => x.id === n.id)
-    return nom?.nomenclature_type !== 'service'
+    return nom?.accounting_type !== 'service'
   })
 
   const [dasmDlg, setDasmDlg] = useState(false)
@@ -298,12 +332,11 @@ export default function InventoryPage() {
       .finally(() => setRDocLoad(false))
   }, [notify])
 
-  useEffect(() => { if (tab === 3) fetchRDocs() }, [tab, fetchRDocs])
+  useEffect(() => { if (tab === 1) fetchRDocs() }, [tab, fetchRDocs])
 
   const openRDocDlg = () => {
-    const defaultWh = scopedWarehouses.length === 1 ? scopedWarehouses[0].id : ''
     setRDocForm({ number: '', date: new Date().toISOString().slice(0, 10), supplier: '', comment: '' })
-    setRDocItems([{ nomenclature: '', warehouse: defaultWh, quantity: '1', purchase_price: '', retail_price: '' }])
+    setRDocItems([{ nomenclature: '', warehouse: defaultReceivingWarehouseId, quantity: '1', purchase_price: '', retail_price: '' }])
     setRDocDlg(true)
   }
 
@@ -321,7 +354,7 @@ export default function InventoryPage() {
       // Auto-process the document
       await api.post(`/inventory/receipt-documents/${res.data.id}/process/`)
       notify('Документ приёмки проведён')
-      setRDocDlg(false); fetchRDocs(); fetchBatches(); fetchStock(); fetchHelpers()
+      setRDocDlg(false); fetchRDocs(); fetchBatches(); fetchStock(); fetchStockSummary()
     } catch (err) { notify(extractError(err, 'Ошибка сохранения документа'), 'error') }
     setRDocSaving(false)
   }
@@ -329,12 +362,12 @@ export default function InventoryPage() {
   const processRDoc = async (docId: string) => {
     try {
       await api.post(`/inventory/receipt-documents/${docId}/process/`)
-      notify('Документ проведён'); fetchRDocs(); fetchBatches(); fetchStock(); fetchHelpers()
+      notify('Документ проведён'); fetchRDocs(); fetchBatches(); fetchStock(); fetchStockSummary()
     } catch (err) { notify(extractError(err, 'Ошибка проведения'), 'error') }
   }
 
 
-  const bouquetNoms = allNom.filter(n => n.nomenclature_type === 'bouquet' || n.nomenclature_type === 'composition')
+  const bouquetNoms = allNom.filter(n => n.accounting_type === 'finished_bouquet')
 
   const getNomWarehouses = (nomId: string): { id: string; name: string; qty: number }[] => {
     const row = stockSummary.find(s => s.nomenclature === nomId)
@@ -358,15 +391,32 @@ export default function InventoryPage() {
     return options.find((o: { id: string; name: string; qty: number }) => o.id === warehouseId)?.qty || 0
   }
 
-  const openAsmDlg = (mode: 'template' | 'individual' = 'template') => {
-    const defaultWh = scopedWarehouses.length === 1 ? scopedWarehouses[0].id : ''
+  const handleAsmImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setAsmImageFile(file)
+    setAsmImagePreview(URL.createObjectURL(file))
+  }
+
+  useEffect(() => {
+    return () => {
+      if (asmImagePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(asmImagePreview)
+      }
+    }
+  }, [asmImagePreview])
+
+  const openAsmDlg = (mode: 'template' | 'individual' = 'individual') => {
     setAsmMode(mode)
+    setAsmImageFile(null)
+    setAsmImagePreview('')
+    if (asmImageInputRef.current) asmImageInputRef.current.value = ''
     if (mode === 'individual') {
-      setAsmForm({ nomenclature_bouquet: '', warehouse_to: defaultWh, quantity: '1', assembler: user?.id || '', add_to_templates: true, bouquet_name: '', selling_price: '' })
+      setAsmForm({ nomenclature_bouquet: '', warehouse_to: defaultBouquetWarehouseId, quantity: '1', assembler: user?.id || '', add_to_templates: false, bouquet_name: '', selling_price: '' })
       setAsmComponents([{ nomenclature: '', nomenclature_name: '', quantity: '1', base_qty: '1', warehouse: '' }])
       setAsmCustom(true)
     } else {
-      setAsmForm({ nomenclature_bouquet: '', warehouse_to: defaultWh, quantity: '1', assembler: user?.id || '', add_to_templates: false, bouquet_name: '', selling_price: '' })
+      setAsmForm({ nomenclature_bouquet: '', warehouse_to: defaultBouquetWarehouseId, quantity: '1', assembler: user?.id || '', add_to_templates: false, bouquet_name: '', selling_price: '' })
       setAsmComponents([])
       setAsmCustom(false)
     }
@@ -374,14 +424,13 @@ export default function InventoryPage() {
   }
 
   const handleAsmModeChange = (newMode: 'template' | 'individual') => {
-    const defaultWh = scopedWarehouses.length === 1 ? scopedWarehouses[0].id : ''
     setAsmMode(newMode)
     if (newMode === 'individual') {
-      setAsmForm(f => ({ ...f, nomenclature_bouquet: '', bouquet_name: '', add_to_templates: true }))
-      setAsmComponents([{ nomenclature: '', nomenclature_name: '', quantity: '1', base_qty: '1', warehouse: defaultWh }])
+      setAsmForm(f => ({ ...f, nomenclature_bouquet: '', warehouse_to: defaultBouquetWarehouseId, bouquet_name: '', add_to_templates: false }))
+      setAsmComponents([{ nomenclature: '', nomenclature_name: '', quantity: '1', base_qty: '1', warehouse: defaultBouquetWarehouseId }])
       setAsmCustom(true)
     } else {
-      setAsmForm(f => ({ ...f, nomenclature_bouquet: '', bouquet_name: '', add_to_templates: false }))
+      setAsmForm(f => ({ ...f, nomenclature_bouquet: '', warehouse_to: defaultBouquetWarehouseId, bouquet_name: '', add_to_templates: false }))
       setAsmComponents([])
       setAsmCustom(false)
     }
@@ -428,6 +477,7 @@ export default function InventoryPage() {
         assembler: asmForm.assembler || undefined,
         add_to_templates: asmForm.add_to_templates,
         bouquet_name: asmForm.bouquet_name,
+        selling_price: asmForm.selling_price,
       }
       if (!isIndividual) {
         payload.nomenclature_bouquet = asmForm.nomenclature_bouquet
@@ -436,19 +486,44 @@ export default function InventoryPage() {
       payload.components = asmComponents
         .filter(c => c.nomenclature && parseFloat(c.quantity) > 0)
         .map(c => ({ nomenclature: c.nomenclature, quantity: c.quantity, warehouse: c.warehouse || asmForm.warehouse_to }))
-      const res = await api.post('/inventory/movements/assemble-bouquet/', payload)
+
+      const formData = new FormData()
+      Object.entries(payload).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === '') return
+        if (key === 'components') {
+          formData.append(key, JSON.stringify(value))
+          return
+        }
+        formData.append(key, String(value))
+      })
+      if (asmImageFile) {
+        formData.append('image', asmImageFile)
+      }
+
+      const res = await api.post('/inventory/movements/assemble-bouquet/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
       notify(res.data.message || 'Букет собран!')
       setAsmDlg(false)
       if (tab === 0) fetchStock()
-      if (tab === 1) fetchBatches()
+      if (tab === 3) fetchBatches()
       if (tab === 2) fetchMoves()
     } catch (err) { notify(extractError(err, 'Ошибка сборки букета'), 'error') }
     setAsmSaving(false)
   }
 
+  const asmBatchQty = Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1
+  const asmUnitCost = asmComponents.reduce((sum, c) => {
+    const n = allNom.find(x => x.id === c.nomenclature)
+    return sum + (n ? parseFloat(n.purchase_price) * parseFloat(c.quantity || '0') : 0)
+  }, 0)
+  const asmSellingPrice = parseFloat(asmForm.selling_price || '0') || 0
+  const asmTotalCost = asmUnitCost * asmBatchQty
+  const asmTotalSale = asmSellingPrice * asmBatchQty
+  const asmUnitMargin = asmSellingPrice - asmUnitCost
+
   const openDasmDlg = () => {
-    const defaultWh = scopedWarehouses.length === 1 ? scopedWarehouses[0].id : ''
-    setDasmForm({ nomenclature_bouquet: '', warehouse: defaultWh, assembler: user?.id || '' })
+    setDasmForm({ nomenclature_bouquet: '', warehouse: defaultBouquetWarehouseId, assembler: user?.id || '' })
     setDasmRows([])
     setDasmDlg(true)
   }
@@ -458,11 +533,11 @@ export default function InventoryPage() {
     const tpl = bouquetTemplates.find(t => t.nomenclature === nomId)
     if (tpl && tpl.components?.length) {
       setDasmRows(tpl.components
-        .filter(c => allNom.find(n => n.id === c.nomenclature)?.nomenclature_type !== 'service')
+        .filter(c => allNom.find(n => n.id === c.nomenclature)?.accounting_type !== 'service')
         .map(c => ({
           nomenclature: c.nomenclature,
           name: c.nomenclature_name || allNom.find(n => n.id === c.nomenclature)?.name || '?',
-          nom_type: allNom.find(n => n.id === c.nomenclature)?.nomenclature_type || '',
+          nom_type: allNom.find(n => n.id === c.nomenclature)?.accounting_type || '',
           base_qty: c.quantity,
           return_qty: c.quantity,
           writeoff_qty: '0',
@@ -493,7 +568,7 @@ export default function InventoryPage() {
       notify(res.data.message || 'Букет раскомплектован!')
       setDasmDlg(false)
       if (tab === 0) fetchStock()
-      if (tab === 1) fetchBatches()
+      if (tab === 3) fetchBatches()
       if (tab === 2) fetchMoves()
     } catch (err) { notify(extractError(err, 'Ошибка раскомплектовки'), 'error') }
     setDasmSaving(false)
@@ -522,7 +597,7 @@ export default function InventoryPage() {
   const submitCorrection = async () => {
     setCorrSaving(true)
     try {
-      const materialRows = corrRows.filter(r => allNom.find(n => n.id === r.nomenclature)?.nomenclature_type !== 'service')
+      const materialRows = corrRows.filter(r => allNom.find(n => n.id === r.nomenclature)?.accounting_type !== 'service')
       const payload = {
         nomenclature_bouquet: corrForm.nomenclature_bouquet,
         warehouse: corrForm.warehouse,
@@ -540,7 +615,7 @@ export default function InventoryPage() {
       notify(res.data.message || 'Букет скорректирован')
       setCorrDlg(false)
       if (tab === 0) fetchStock()
-      if (tab === 1) fetchBatches()
+      if (tab === 3) fetchBatches()
       if (tab === 2) fetchMoves()
     } catch (err) {
       notify(extractError(err, 'Ошибка коррекции букета'), 'error')
@@ -564,8 +639,8 @@ export default function InventoryPage() {
           <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}>
             <Tab icon={<Inventory2 />} iconPosition="start" label="Остатки" />
             <Tab icon={<LocalShipping />} iconPosition="start" label="Поступления" />
-            <Tab icon={<SwapHoriz />} iconPosition="start" label="Движения" />
-            <Tab icon={<Description />} iconPosition="start" label="Документы приёмки" />
+            <Tab icon={<SwapHoriz />} iconPosition="start" label="Перемещения" />
+            <Tab icon={<Description />} iconPosition="start" label="Партии" />
           </Tabs>
 
           {/* ── Tab 0: Остатки ── */}
@@ -581,6 +656,8 @@ export default function InventoryPage() {
                 </Grid>
               </Grid>
               <DataTable
+                dense
+                searchDebounceMs={0}
                 columns={[
                   {
                     key: 'nomenclature_name',
@@ -624,7 +701,7 @@ export default function InventoryPage() {
                         >
                           Продать
                         </Button>
-                        {(allNom.find(n => n.id === row.nomenclature)?.nomenclature_type === 'bouquet' || allNom.find(n => n.id === row.nomenclature)?.nomenclature_type === 'composition') && (
+                        {allNom.find(n => n.id === row.nomenclature)?.accounting_type === 'finished_bouquet' && (
                           <Button
                             size="small"
                             variant="outlined"
@@ -634,7 +711,7 @@ export default function InventoryPage() {
                               const tpl = bouquetTemplates.find(t => t.nomenclature === row.nomenclature)
                               setCorrForm({ nomenclature_bouquet: row.nomenclature, warehouse: row.warehouse, selling_price: allNom.find(n => n.id === row.nomenclature)?.retail_price || '' })
                               setCorrRows((tpl?.components || [])
-                                .filter(c => allNom.find(n => n.id === c.nomenclature)?.nomenclature_type !== 'service')
+                                .filter(c => allNom.find(n => n.id === c.nomenclature)?.accounting_type !== 'service')
                                 .map(c => ({
                                   nomenclature: c.nomenclature,
                                   name: c.nomenclature_name || allNom.find(n => n.id === c.nomenclature)?.name || '?',
@@ -673,8 +750,9 @@ export default function InventoryPage() {
           )}
 
           {/* ── Tab 1: Поступления ── */}
-          {tab === 1 && (
+          {tab === 3 && (
             <DataTable
+              dense
               columns={[
                 { key: 'nomenclature_name', label: 'Номенклатура', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
                 { key: 'warehouse_name', label: 'Склад' },
@@ -689,36 +767,33 @@ export default function InventoryPage() {
                   <IconButton size="small" onClick={() => setDelB(row)}><Delete fontSize="small" /></IconButton>
                 </>) },
               ]}
-              rows={batches} loading={bLoad} emptyText="Поступлений нет"
-              headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openBDlg()}>Добавить поступление</Button>}
+              rows={batches} loading={bLoad} emptyText="Партий нет"
+              headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openBDlg()}>Добавить партию</Button>}
             />
           )}
 
-          {/* ── Tab 2: Движения ── */}
+          {/* ── Tab 2: Перемещения ── */}
           {tab === 2 && (
             <DataTable
+              dense
               columns={[
                 { key: 'created_at', label: 'Дата', render: (v: string) => fmtDateTime(v) },
-                { key: 'movement_type', label: 'Тип', render: (v: string) => mtChip(v) },
                 { key: 'nomenclature_name', label: 'Номенклатура', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
                 { key: 'quantity', label: 'Кол-во', align: 'right', render: (v: string) => fmtNum(v) },
-                { key: 'price', label: 'Цена', align: 'right', render: (v: string) => v ? `${fmtNum(v)} ₽` : '—' },
                 { key: 'warehouse_from', label: 'Откуда', render: (v: string | null) => whName(v) },
                 { key: 'warehouse_to', label: 'Куда', render: (v: string | null) => whName(v) },
-                { key: '_act', label: '', align: 'center', width: 100, render: (_: any, row: StockMovement) => (<>
-                  <IconButton size="small" onClick={() => openMDlg(row)}><Edit fontSize="small" /></IconButton>
-                  <IconButton size="small" onClick={() => setDelM(row)}><Delete fontSize="small" /></IconButton>
-                </>) },
+                { key: 'notes', label: 'Комментарий', render: (v: string) => v || '—' },
               ]}
-              rows={moves} loading={mLoad} emptyText="Движений нет"
-              headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openMDlg()}>Добавить движение</Button>}
+              rows={moves} loading={mLoad} emptyText="Перемещений нет"
+              headerActions={<Button variant="contained" startIcon={<Add />} onClick={() => openMDlg()}>Новое перемещение</Button>}
             />
           )}
 
-          {/* ── Tab 3: Документы приёмки ── */}
-          {tab === 3 && (
+          {/* ── Tab 1: Документы приёмки ── */}
+          {tab === 1 && (
             <>
               <DataTable
+                dense
                 columns={[
                   { key: 'number', label: '№ документа', render: (v: string) => <Typography fontWeight={500}>{v || '—'}</Typography> },
                   { key: 'date', label: 'Дата', render: (v: string) => fmtDate(v) },
@@ -787,55 +862,39 @@ export default function InventoryPage() {
 
       {/* ── Movement Dialog ── */}
       <EntityFormDialog open={mDlg} onClose={() => setMDlg(false)} onSubmit={saveM}
-        title={editM ? 'Редактировать движение' : 'Новое движение'} submitText={editM ? 'Сохранить' : 'Создать'}
-        disabled={!mForm.nomenclature || !mForm.quantity}>
-        <TextField label="Номенклатура" required select fullWidth value={mForm.nomenclature}
-          onChange={e => setMForm({ ...mForm, nomenclature: e.target.value })}>
-          {nomenclatures.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
-        </TextField>
-        <TextField label="Тип движения" required select fullWidth value={mForm.movement_type}
-          onChange={e => setMForm({ ...mForm, movement_type: e.target.value })}>
-          {MOVEMENT_TYPES.map(t => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
-        </TextField>
+        title="Новое перемещение" submitText="Переместить"
+        disabled={!mForm.nomenclature || !mForm.quantity || !mForm.warehouse_from || !mForm.warehouse_to || mForm.warehouse_from === mForm.warehouse_to}>
+        <Autocomplete
+          options={receiptNomenclatures}
+          getOptionLabel={(option) => option.name}
+          value={receiptNomenclatures.find(n => n.id === mForm.nomenclature) || null}
+          onChange={(_, newValue) => setMForm({ ...mForm, nomenclature: newValue?.id || '' })}
+          renderInput={(params) => <TextField {...params} label="Номенклатура" required fullWidth />}
+          isOptionEqualToValue={(option, value) => option.id === value.id}
+          noOptionsText="Нет позиций"
+        />
         <Grid container spacing={2}>
           <Grid size={{ xs: 6 }}>
             <TextField label="Склад-источник" select fullWidth value={mForm.warehouse_from}
               onChange={e => setMForm({ ...mForm, warehouse_from: e.target.value })}>
-              <MenuItem value="">— нет —</MenuItem>
               {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
             </TextField>
           </Grid>
           <Grid size={{ xs: 6 }}>
             <TextField label="Склад-получатель" select fullWidth value={mForm.warehouse_to}
               onChange={e => setMForm({ ...mForm, warehouse_to: e.target.value })}>
-              <MenuItem value="">— нет —</MenuItem>
               {scopedWarehouses.map(w => <MenuItem key={w.id} value={w.id}>{w.name}</MenuItem>)}
             </TextField>
           </Grid>
         </Grid>
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 6 }}>
-            <TextField label="Количество" required type="number" fullWidth value={mForm.quantity}
-              onChange={e => setMForm({ ...mForm, quantity: e.target.value })} />
-          </Grid>
-          <Grid size={{ xs: 6 }}>
-            <TextField label="Цена" type="number" fullWidth value={mForm.price}
-              onChange={e => setMForm({ ...mForm, price: e.target.value })} />
-          </Grid>
-        </Grid>
-        {mForm.movement_type === 'write_off' && (
-          <TextField label="Причина списания" select fullWidth value={mForm.write_off_reason}
-            onChange={e => setMForm({ ...mForm, write_off_reason: e.target.value })}>
-            {WRITE_OFF_REASONS.map(r => <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>)}
-          </TextField>
-        )}
+        <TextField label="Количество" required type="number" fullWidth value={mForm.quantity}
+          onChange={e => setMForm({ ...mForm, quantity: e.target.value })} />
         <TextField label="Примечания" fullWidth multiline rows={2} value={mForm.notes}
           onChange={e => setMForm({ ...mForm, notes: e.target.value })} />
       </EntityFormDialog>
 
       {/* ── Confirm Dialogs ── */}
       <ConfirmDialog open={!!delB} title="Удалить поступление?" message={`Удалить поступление "${delB?.nomenclature_name}"?`} onConfirm={removeB} onCancel={() => setDelB(null)} />
-      <ConfirmDialog open={!!delM} title="Удалить движение?" message={`Удалить движение "${delM?.nomenclature_name}"?`} onConfirm={removeM} onCancel={() => setDelM(null)} />
 
       {/* ── Assembly Dialog ── */}
       <Dialog open={asmDlg} onClose={() => setAsmDlg(false)} maxWidth="md" fullWidth>
@@ -843,6 +902,35 @@ export default function InventoryPage() {
           <Typography variant="h6" fontWeight={700}>Сборка букета</Typography>
         </DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '16px !important' }}>
+          <Box sx={{
+            display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap',
+            p: 1.5, border: '1px dashed', borderColor: 'divider', borderRadius: 1.5,
+            bgcolor: 'background.default',
+          }}>
+            {asmImagePreview ? (
+              <Avatar src={asmImagePreview} variant="rounded" sx={{ width: 88, height: 88 }} />
+            ) : (
+              <Avatar variant="rounded" sx={{ width: 88, height: 88, bgcolor: 'action.hover' }}>
+                <AutoAwesome />
+              </Avatar>
+            )}
+            <Box sx={{ flex: 1, minWidth: 220 }}>
+              <Typography variant="subtitle2" fontWeight={600}>Фото готового букета</Typography>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                Фото попадёт на витрину кассы и сохранится отдельно от шаблона.
+              </Typography>
+              <input
+                ref={asmImageInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleAsmImageChange}
+              />
+              <Button variant="outlined" startIcon={<Add />} onClick={() => asmImageInputRef.current?.click()}>
+                {asmImagePreview ? 'Изменить фото' : 'Добавить фото'}
+              </Button>
+            </Box>
+          </Box>
 
           {/* ── Mode selector ── */}
           <ToggleButtonGroup
@@ -859,10 +947,15 @@ export default function InventoryPage() {
 
           {/* Template select — только в режиме «По шаблону» */}
           {asmMode === 'template' && (
-            <TextField label="Букет" required select fullWidth value={asmForm.nomenclature_bouquet}
-              onChange={e => handleAsmBouquetChange(e.target.value)}>
-              {bouquetNoms.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
-            </TextField>
+            <Autocomplete
+              options={bouquetNoms}
+              getOptionLabel={(option) => option.name}
+              value={bouquetNoms.find(n => n.id === asmForm.nomenclature_bouquet) || null}
+              onChange={(_, newValue) => handleAsmBouquetChange(newValue?.id || '')}
+              renderInput={(params) => <TextField {...params} label="Шаблон букета" required fullWidth />}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              noOptionsText="Нет готовых шаблонов"
+            />
           )}
 
           {/* Name input — только в индивидуальном режиме */}
@@ -915,24 +1008,30 @@ export default function InventoryPage() {
               </Grid>
               {asmComponents.map((c, i) => {
                 const nom = allNom.find(n => n.id === c.nomenclature)
-                const isService = nom?.nomenclature_type === 'service'
+                const isService = nom?.accounting_type === 'service'
                 const needQty = parseFloat(c.quantity || '0') * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)
                 const hasShortage = !isService && c.nomenclature && getAvailableQty(c.nomenclature, c.warehouse) < needQty
                 return (
                 <Box key={i} sx={{ px: 1, py: 0.75, borderRadius: 1, mb: 0.25, bgcolor: hasShortage ? 'error.lighter' : 'transparent', '&:hover': { bgcolor: hasShortage ? 'error.lighter' : 'action.hover' } }}>
                   <Grid container spacing={1} alignItems="center">
                     <Grid size={{ xs: 4 }}>
-                      <TextField select size="small" fullWidth label="Компонент" value={c.nomenclature}
-                        onChange={e => {
-                          const nextNom = e.target.value
-                          const need = parseFloat(c.quantity || '0') * (Math.max(1, Math.round(Number(asmForm.quantity) || 1)) || 1)
+                      <Autocomplete
+                        size="small"
+                        options={componentNoms}
+                        getOptionLabel={(option) => option.name}
+                        value={componentNoms.find(n => n.id === c.nomenclature) || null}
+                        onChange={(_, newValue) => {
+                          const nextNom = newValue?.id || ''
+                          const need = parseFloat(c.quantity || '0') * asmBatchQty
                           const wh = getRecommendedWarehouse(nextNom, need)
                           const upd = [...asmComponents]
-                          upd[i] = { ...upd[i], nomenclature: nextNom, nomenclature_name: componentNoms.find(n => n.id === nextNom)?.name || '', warehouse: wh }
+                          upd[i] = { ...upd[i], nomenclature: nextNom, nomenclature_name: newValue?.name || '', warehouse: wh }
                           setAsmComponents(upd)
-                        }}>
-                        {componentNoms.map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
-                      </TextField>
+                        }}
+                        renderInput={(params) => <TextField {...params} label="Компонент" fullWidth />}
+                        isOptionEqualToValue={(option, value) => option.id === value.id}
+                        noOptionsText="Нет компонентов"
+                      />
                     </Grid>
                     <Grid size={{ xs: 2 }}>
                       <TextField size="small" fullWidth label="Кол-во" type="number" value={c.quantity}
@@ -951,7 +1050,6 @@ export default function InventoryPage() {
                             setAsmComponents(upd)
                           }}>
                           {getNomWarehouses(c.nomenclature)
-                            .filter(w => w.qty >= needQty)
                             .map(w => (
                             <MenuItem key={w.id} value={w.id}>{w.name} ({w.qty})</MenuItem>
                           ))}
@@ -980,21 +1078,25 @@ export default function InventoryPage() {
                 Добавить компонент
               </Button>
 
-              <Box sx={{ mt: 1.5, p: 1.5, bgcolor: 'background.default', borderRadius: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="body2" fontWeight={500}>
-                  Себестоимость: {asmComponents.reduce((sum, c) => {
-                    const n = allNom.find(x => x.id === c.nomenclature)
-                    return sum + (n ? parseFloat(n.purchase_price) * parseFloat(c.quantity || '0') : 0)
-                  }, 0).toFixed(2)} ₽ / шт.
-                </Typography>
-                {asmForm.selling_price && (
-                  <Typography variant="body2" fontWeight={500} color="success.main">
-                    Маржа: {(parseFloat(asmForm.selling_price) - asmComponents.reduce((sum, c) => {
-                      const n = allNom.find(x => x.id === c.nomenclature)
-                      return sum + (n ? parseFloat(n.purchase_price) * parseFloat(c.quantity || '0') : 0)
-                    }, 0)).toFixed(2)} ₽
+              <Box sx={{ mt: 1.5, p: 1.5, bgcolor: 'background.default', borderRadius: 1.5, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 1 }}>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Себестоимость / шт.</Typography>
+                  <Typography variant="body2" fontWeight={600}>{asmUnitCost.toFixed(2)} ₽</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Себестоимость партии</Typography>
+                  <Typography variant="body2" fontWeight={600}>{asmTotalCost.toFixed(2)} ₽</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Продажа партии</Typography>
+                  <Typography variant="body2" fontWeight={600}>{asmTotalSale.toFixed(2)} ₽</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Маржа / шт.</Typography>
+                  <Typography variant="body2" fontWeight={600} color={asmUnitMargin >= 0 ? 'success.main' : 'error.main'}>
+                    {asmUnitMargin.toFixed(2)} ₽
                   </Typography>
-                )}
+                </Box>
               </Box>
 
               {asmMode === 'template' && (
@@ -1249,7 +1351,7 @@ export default function InventoryPage() {
         </TextField>
         <TextField label="Номенклатура" required select fullWidth value={writeOffForm.nomenclature}
           onChange={e => setWriteOffForm({...writeOffForm, nomenclature: e.target.value})}>
-          {allNom.filter(n => n.nomenclature_type !== 'service').map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
+          {allNom.filter(n => n.accounting_type !== 'service').map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
         </TextField>
         <TextField label="Количество" required type="number" fullWidth value={writeOffForm.quantity}
           inputProps={{ min: 1 }}
@@ -1293,7 +1395,7 @@ export default function InventoryPage() {
                   if (nom) { upd[idx].purchase_price = nom.purchase_price || ''; upd[idx].retail_price = nom.retail_price || '' }
                   setRDocItems(upd)
                 }}>
-                {allNom.filter(n => n.nomenclature_type !== 'service').map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
+                {allNom.filter(n => n.accounting_type !== 'service').map(n => <MenuItem key={n.id} value={n.id}>{n.name}</MenuItem>)}
               </TextField>
               <TextField label="Склад" select sx={{ flex: 1 }} value={item.warehouse}
                 onChange={e => { const upd = [...rDocItems]; upd[idx] = { ...upd[idx], warehouse: e.target.value }; setRDocItems(upd) }}>
@@ -1307,14 +1409,13 @@ export default function InventoryPage() {
               <TextField label="Розн. ₽" type="number" sx={{ width: 110 }} value={item.retail_price}
                 onChange={e => { const upd = [...rDocItems]; upd[idx] = { ...upd[idx], retail_price: e.target.value }; setRDocItems(upd) }} />
               <IconButton size="small" color="error"
-                onClick={() => { const upd = rDocItems.filter((_, i) => i !== idx); setRDocItems(upd.length ? upd : [{ nomenclature: '', warehouse: '', quantity: '1', purchase_price: '', retail_price: '' }]) }}>
+                onClick={() => { const upd = rDocItems.filter((_, i) => i !== idx); setRDocItems(upd.length ? upd : [{ nomenclature: '', warehouse: defaultReceivingWarehouseId, quantity: '1', purchase_price: '', retail_price: '' }]) }}>
                 <Delete fontSize="small" />
               </IconButton>
             </Box>
           ))}
           <Button size="small" startIcon={<Add />} onClick={() => {
-            const defaultWh = scopedWarehouses.length === 1 ? scopedWarehouses[0].id : ''
-            setRDocItems([...rDocItems, { nomenclature: '', warehouse: defaultWh, quantity: '1', purchase_price: '', retail_price: '' }])
+            setRDocItems([...rDocItems, { nomenclature: '', warehouse: defaultReceivingWarehouseId, quantity: '1', purchase_price: '', retail_price: '' }])
           }}>
             Добавить позицию
           </Button>

@@ -108,6 +108,17 @@ class CheckoutLineSerializer(serializers.Serializer):
     price = serializers.DecimalField(max_digits=12, decimal_places=2)
     discount_percent = serializers.DecimalField(max_digits=5, decimal_places=2, default=0)
 
+    def validate(self, attrs):
+        source_mode = attrs['source_mode']
+        if source_mode == 'ready_bouquet' and not attrs.get('batch'):
+            raise serializers.ValidationError({'batch': 'Для продажи готового букета нужна партия.'})
+        if source_mode == 'reserve':
+            if not attrs.get('reserve'):
+                raise serializers.ValidationError({'reserve': 'Для продажи резерва нужен резерв.'})
+            if not attrs.get('batch'):
+                raise serializers.ValidationError({'batch': 'Для продажи резерва нужна партия.'})
+        return attrs
+
 
 class CheckoutSerializer(serializers.Serializer):
     """Payload для POST /api/cashier/checkout/."""

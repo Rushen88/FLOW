@@ -20,9 +20,11 @@ interface DataTableProps {
   columns: Column[]
   rows: any[]
   loading?: boolean
+  dense?: boolean
   search?: string
   onSearchChange?: (v: string) => void
   searchPlaceholder?: string
+  searchDebounceMs?: number
   page?: number
   totalPages?: number
   onPageChange?: (page: number) => void
@@ -34,7 +36,9 @@ interface DataTableProps {
 
 export default function DataTable({
   columns, rows, loading = false,
+  dense = false,
   search, onSearchChange, searchPlaceholder = 'Поиск...',
+  searchDebounceMs = 350,
   page = 1, totalPages = 1, onPageChange,
   emptyText = 'Нет данных', headerActions, onRowClick, getRowSx,
 }: DataTableProps) {
@@ -52,9 +56,13 @@ export default function DataTable({
   const handleSearchChange = (v: string) => {
     setLocalSearch(v)
     if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (searchDebounceMs <= 0) {
+      onSearchChange?.(v)
+      return
+    }
     debounceRef.current = setTimeout(() => {
       onSearchChange?.(v)
-    }, 350)
+    }, searchDebounceMs)
   }
 
   return (
@@ -76,11 +84,11 @@ export default function DataTable({
         )}
 
         <TableContainer>
-          <Table>
+          <Table size={dense ? 'small' : 'medium'}>
             <TableHead>
               <TableRow>
                 {columns.map((col) => (
-                  <TableCell key={col.key} align={col.align || 'left'} sx={{ fontWeight: 600, width: col.width }}>
+                  <TableCell key={col.key} align={col.align || 'left'} sx={{ fontWeight: 600, width: col.width, py: dense ? 1 : undefined }}>
                     {col.label}
                   </TableCell>
                 ))}
@@ -91,7 +99,7 @@ export default function DataTable({
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
                     {columns.map((col) => (
-                      <TableCell key={col.key}><Skeleton animation="wave" /></TableCell>
+                      <TableCell key={col.key} sx={{ py: dense ? 1 : undefined }}><Skeleton animation="wave" /></TableCell>
                     ))}
                   </TableRow>
                 ))
@@ -108,7 +116,7 @@ export default function DataTable({
                   sx={{ ...(onRowClick ? { cursor: 'pointer' } : {}), ...(getRowSx?.(row) || {}) }}
                 >
                   {columns.map((col) => (
-                    <TableCell key={col.key} align={col.align || 'left'}>
+                    <TableCell key={col.key} align={col.align || 'left'} sx={{ py: dense ? 1 : undefined }}>
                       {col.render ? col.render(row[col.key], row) : row[col.key] ?? '—'}
                     </TableCell>
                   ))}

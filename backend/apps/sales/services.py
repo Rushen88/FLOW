@@ -153,7 +153,7 @@ def do_sale_fifo_write_off(sale):
 
     for item in sale.items.select_related('nomenclature', 'batch').all():
         nom = item.nomenclature
-        if nom.nomenclature_type == 'service':
+        if nom.accounting_type == 'service':
             continue
 
         # Определение склада для списания
@@ -187,7 +187,7 @@ def do_sale_fifo_write_off(sale):
                 # Количество в составе умножаем на количество букетов
                 comp_qty = Decimal(str(comp.quantity)) * Decimal(str(item.quantity))
                 items_to_write_off.append((comp.nomenclature, comp_qty))
-        elif nom.nomenclature_type in ('bouquet', 'composition'):
+        elif nom.accounting_type == 'finished_bouquet':
             # Если это шаблонный букет/композиция, списываем компоненты шаблона
             try:
                 template = nom.bouquet_template

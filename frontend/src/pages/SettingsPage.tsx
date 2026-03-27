@@ -18,11 +18,18 @@ interface Organization { id: string; name: string; inn: string; phone: string; e
 interface TradingPoint { id: string; organization: string; name: string; address: string; phone: string; work_schedule: string; manager: string | null; is_active: boolean }
 interface WarehouseT { id: string; organization: string; trading_point: string; trading_point_name?: string; name: string; warehouse_type: string; responsible: string | null; is_default_for_bouquets: boolean; is_default_for_receiving: boolean; is_default_for_sales: boolean; notes: string; is_active: boolean }
 interface PaymentMethod { id: string; organization: string; name: string; is_cash: boolean; commission_percent: string; wallet: string | null; wallet_name: string; is_active: boolean }
+interface CashierCategory { id: string; name: string; icon: string; sort_order: number; is_visible_in_cashier: boolean; source_type: string; is_system: boolean; group_ids: string[] }
+interface NomenclatureGroupRef { id: string; name: string; parent: string | null }
 const WH_TYPES = [
   { value: 'main', label: 'Основной' },
   { value: 'showcase', label: 'Витрина' },
   { value: 'fridge', label: 'Холодильник' },
   { value: 'assembly', label: 'Сборка' },
+  { value: 'reserve', label: 'Резерв' },
+]
+const CASHIER_SOURCE_TYPES = [
+  { value: 'nomenclature', label: 'Номенклатура' },
+  { value: 'finished_bouquets', label: 'Готовые букеты' },
   { value: 'reserve', label: 'Резерв' },
 ]
 
@@ -122,8 +129,28 @@ export default function SettingsPage() {
     setWhDlg(true)
   }
 
+  const warehouseDefaultConflicts = whs.filter(w =>
+    w.trading_point === whForm.trading_point &&
+    w.id !== editWh?.id && (
+      (whForm.is_default_for_receiving && w.is_default_for_receiving)
+      || (whForm.is_default_for_bouquets && w.is_default_for_bouquets)
+      || (whForm.is_default_for_sales && w.is_default_for_sales)
+    )
+  )
+
+  const defaultConflictLabels = [
+    whForm.is_default_for_receiving && warehouseDefaultConflicts.some(w => w.is_default_for_receiving) ? 'приёмки' : '',
+    whForm.is_default_for_bouquets && warehouseDefaultConflicts.some(w => w.is_default_for_bouquets) ? 'букетов' : '',
+    whForm.is_default_for_sales && warehouseDefaultConflicts.some(w => w.is_default_for_sales) ? 'продаж' : '',
+  ].filter(Boolean)
+
   const saveWh = async () => {
     try {
+      if (defaultConflictLabels.length) {
+        const tpName = points.find(p => p.id === whForm.trading_point)?.name || 'выбранной точке'
+        const confirmed = window.confirm(`Для ${defaultConflictLabels.join(', ')} будет заменён текущий склад по умолчанию в ${tpName}. Продолжить?`)
+        if (!confirmed) return
+      }
       if (editWh) { await api.patch(`/core/warehouses/${editWh.id}/`, whForm); notify('Склад обновлён') }
       else { await api.post('/core/warehouses/', whForm); notify('Склад создан') }
       setWhDlg(false); fetchWhs()
@@ -145,12 +172,37 @@ export default function SettingsPage() {
   const [delPm, setDelPm] = useState<PaymentMethod | null>(null)
   const [wallets, setWallets] = useState<{id: string; name: string}[]>([])
 
+  // ─── Cashier Categories ───
+  const [cashierCats, setCashierCats] = useState<CashierCategory[]>([])
+  const [cashierCatLoad, setCashierCatLoad] = useState(false)
+  const [cashierCatDlg, setCashierCatDlg] = useState(false)
+  const [editCashierCat, setEditCashierCat] = useState<CashierCategory | null>(null)
+  const [cashierCatForm, setCashierCatForm] = useState({ name: '', icon: '', sort_order: '10', is_visible_in_cashier: true, source_type: 'nomenclature', group_ids: [] as string[] })
+  const [delCashierCat, setDelCashierCat] = useState<CashierCategory | null>(null)
+  const [nomGroups, setNomGroups] = useState<NomenclatureGroupRef[]>([])
+
   const fetchPms = useCallback(() => {
     setPmLoad(true)
     api.get('/core/payment-methods/').then(res => setPms(res.data.results || res.data || [])).finally(() => setPmLoad(false))
   }, [])
 
   useEffect(() => { if (tab === 2) { fetchPms(); api.get('/finance/wallets/').then(res => setWallets(res.data.results || res.data || [])) } }, [tab, fetchPms])
+
+  const fetchCashierCats = useCallback(() => {
+    setCashierCatLoad(true)
+    api.get('/cashier/categories/').then(res => setCashierCats(res.data.results || res.data || [])).finally(() => setCashierCatLoad(false))
+  }, [])
+
+  const fetchNomGroups = useCallback(() => {
+    api.get('/nomenclature/groups/').then(res => setNomGroups(res.data.results || res.data || []))
+  }, [])
+
+  useEffect(() => {
+    if (tab === 3) {
+      fetchCashierCats()
+      fetchNomGroups()
+    }
+  }, [tab, fetchCashierCats, fetchNomGroups])
 
   const openPmDlg = (pm?: PaymentMethod) => {
     if (pm) { setEditPm(pm); setPmForm({ name: pm.name, is_cash: pm.is_cash, commission_percent: pm.commission_percent, wallet: pm.wallet || '' }) }
@@ -173,6 +225,53 @@ export default function SettingsPage() {
     catch (err) { notify(extractError(err, 'Ошибка удаления'), 'error') }
   }
 
+  const openCashierCatDlg = (category?: CashierCategory) => {
+    if (category) {
+      setEditCashierCat(category)
+      setCashierCatForm({
+        name: category.name,
+        icon: category.icon || '',
+        sort_order: String(category.sort_order ?? 10),
+        is_visible_in_cashier: category.is_visible_in_cashier,
+        source_type: category.source_type,
+        group_ids: category.group_ids || [],
+      })
+    } else {
+      setEditCashierCat(null)
+      setCashierCatForm({ name: '', icon: '', sort_order: '10', is_visible_in_cashier: true, source_type: 'nomenclature', group_ids: [] })
+    }
+    setCashierCatDlg(true)
+  }
+
+  const saveCashierCat = async () => {
+    try {
+      const payload = {
+        ...cashierCatForm,
+        sort_order: Number(cashierCatForm.sort_order) || 0,
+        group_ids: cashierCatForm.source_type === 'nomenclature' ? cashierCatForm.group_ids : [],
+      }
+      if (editCashierCat) {
+        await api.patch(`/cashier/categories/${editCashierCat.id}/`, payload)
+        notify('Категория кассы обновлена')
+      } else {
+        await api.post('/cashier/categories/', payload)
+        notify('Категория кассы создана')
+      }
+      setCashierCatDlg(false)
+      fetchCashierCats()
+    } catch (err) { notify(extractError(err, 'Ошибка сохранения категории кассы'), 'error') }
+  }
+
+  const removeCashierCat = async () => {
+    if (!delCashierCat) return
+    try {
+      await api.delete(`/cashier/categories/${delCashierCat.id}/`)
+      notify('Категория кассы удалена')
+      setDelCashierCat(null)
+      fetchCashierCats()
+    } catch (err) { notify(extractError(err, 'Ошибка удаления категории кассы'), 'error') }
+  }
+
   return (
     <Box>
       <Typography variant="h5" fontWeight={700} sx={{ mb: 3 }}>Настройки</Typography>
@@ -182,6 +281,7 @@ export default function SettingsPage() {
             <Tab icon={<Store />} iconPosition="start" label="Торговые точки" />
             <Tab icon={<Warehouse />} iconPosition="start" label="Склады" />
             <Tab icon={<CreditCard />} iconPosition="start" label="Способы оплаты" />
+            <Tab icon={<Business />} iconPosition="start" label="Категории кассы" />
           </Tabs>
 
           {/* ═══ Trading Points Tab ═══ */}
@@ -254,6 +354,27 @@ export default function SettingsPage() {
             />
           )}
 
+          {tab === 3 && (
+            <DataTable
+              columns={[
+                { key: 'name', label: 'Название', render: (v: string) => <Typography fontWeight={500}>{v}</Typography> },
+                { key: 'source_type', label: 'Источник', render: (v: string) => <Chip label={CASHIER_SOURCE_TYPES.find(t => t.value === v)?.label || v} size="small" variant="outlined" /> },
+                { key: 'sort_order', label: 'Порядок', align: 'right' as const },
+                { key: 'is_visible_in_cashier', label: 'Видимость', render: (v: boolean) => <Chip label={v ? 'Показывается' : 'Скрыта'} size="small" color={v ? 'success' : 'default'} /> },
+                { key: 'is_system', label: 'Тип', render: (v: boolean) => <Chip label={v ? 'Системная' : 'Пользовательская'} size="small" color={v ? 'info' : 'default'} /> },
+                ...(isOwnerOrAdmin ? [{ key: '_act', label: '', align: 'center' as const, width: 120, render: (_: any, row: CashierCategory) => (<>
+                  <IconButton size="small" onClick={() => openCashierCatDlg(row)}><Edit fontSize="small" /></IconButton>
+                  {!row.is_system && <IconButton size="small" onClick={() => setDelCashierCat(row)}><Delete fontSize="small" /></IconButton>}
+                </>) }] : []),
+              ]}
+              rows={cashierCats} loading={cashierCatLoad} emptyText="Добавьте категории кассы"
+              headerActions={isOwnerOrAdmin ?
+                <Button variant="contained" startIcon={<Add />} onClick={() => openCashierCatDlg()}>Добавить категорию</Button>
+                : undefined
+              }
+            />
+          )}
+
 
         </CardContent>
       </Card>
@@ -270,6 +391,11 @@ export default function SettingsPage() {
       {/* Warehouse Dialog */}
       <EntityFormDialog open={whDlg} onClose={() => setWhDlg(false)} onSubmit={saveWh}
         title={editWh ? 'Редактировать склад' : 'Новый склад'} submitText={editWh ? 'Сохранить' : 'Создать'} disabled={!whForm.name || !whForm.trading_point}>
+        {defaultConflictLabels.length > 0 && (
+          <Alert severity="warning">
+            При сохранении будет заменён текущий склад по умолчанию для: {defaultConflictLabels.join(', ')}.
+          </Alert>
+        )}
         <TextField label="Название" required fullWidth value={whForm.name} onChange={e => setWhForm({ ...whForm, name: e.target.value })} />
         <TextField label="Торговая точка" required select fullWidth value={whForm.trading_point} onChange={e => setWhForm({ ...whForm, trading_point: e.target.value })}>
           {points.map(p => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
@@ -300,9 +426,39 @@ export default function SettingsPage() {
         </TextField>
       </EntityFormDialog>
 
+      <EntityFormDialog open={cashierCatDlg} onClose={() => setCashierCatDlg(false)} onSubmit={saveCashierCat}
+        title={editCashierCat ? 'Редактировать категорию кассы' : 'Новая категория кассы'} submitText={editCashierCat ? 'Сохранить' : 'Создать'}
+        disabled={!cashierCatForm.name || (cashierCatForm.source_type === 'nomenclature' && cashierCatForm.group_ids.length === 0)}>
+        <TextField label="Название" required fullWidth value={cashierCatForm.name}
+          onChange={e => setCashierCatForm({ ...cashierCatForm, name: e.target.value })} />
+        <TextField label="Источник" select fullWidth value={cashierCatForm.source_type}
+          onChange={e => setCashierCatForm({ ...cashierCatForm, source_type: e.target.value, group_ids: e.target.value === 'nomenclature' ? cashierCatForm.group_ids : [] })}>
+          {CASHIER_SOURCE_TYPES.map(t => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
+        </TextField>
+        <TextField label="Порядок" type="number" fullWidth value={cashierCatForm.sort_order}
+          onChange={e => setCashierCatForm({ ...cashierCatForm, sort_order: e.target.value })} />
+        <TextField label="Иконка" fullWidth value={cashierCatForm.icon}
+          onChange={e => setCashierCatForm({ ...cashierCatForm, icon: e.target.value })} placeholder="Category" />
+        {cashierCatForm.source_type === 'nomenclature' && (
+          <TextField
+            label="Группы номенклатуры" select fullWidth SelectProps={{ multiple: true }}
+            value={cashierCatForm.group_ids}
+            onChange={e => setCashierCatForm({ ...cashierCatForm, group_ids: typeof e.target.value === 'string' ? e.target.value.split(',') : e.target.value })}
+            helperText="Для категории номенклатуры выберите минимум одну группу. В кассу попадут позиции из выбранных групп и всей их дочерней ветки."
+          >
+            {nomGroups.map(group => <MenuItem key={group.id} value={group.id}>{group.name}</MenuItem>)}
+          </TextField>
+        )}
+        <FormControlLabel
+          control={<Switch checked={cashierCatForm.is_visible_in_cashier} onChange={e => setCashierCatForm({ ...cashierCatForm, is_visible_in_cashier: e.target.checked })} />}
+          label="Показывать в кассе"
+        />
+      </EntityFormDialog>
+
       <ConfirmDialog open={!!delPt} title="Удалить точку?" message={`Удалить "${delPt?.name}"?`} onConfirm={removePt} onCancel={() => setDelPt(null)} />
       <ConfirmDialog open={!!delWh} title="Удалить склад?" message={`Удалить "${delWh?.name}"?`} onConfirm={removeWh} onCancel={() => setDelWh(null)} />
       <ConfirmDialog open={!!delPm} title="Удалить способ оплаты?" message={`Удалить "${delPm?.name}"?`} onConfirm={removePm} onCancel={() => setDelPm(null)} />
+      <ConfirmDialog open={!!delCashierCat} title="Удалить категорию кассы?" message={`Удалить "${delCashierCat?.name}"?`} onConfirm={removeCashierCat} onCancel={() => setDelCashierCat(null)} />
     </Box>
   )
 }

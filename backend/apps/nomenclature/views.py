@@ -43,12 +43,15 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         )
         item_rows = list(
             _tenant_filter(
-                Nomenclature.objects.filter(is_deleted=False),
+                Nomenclature.objects.filter(
+                    is_deleted=False,
+                    is_template_placeholder=False,
+                ),
                 request.user,
             )
             .order_by('name')
             .values(
-                'id', 'name', 'nomenclature_type', 'accounting_type', 'sku',
+                'id', 'name', 'accounting_type', 'sku',
                 'retail_price', 'purchase_price', 'is_active', 'group_id',
             )
         )
@@ -78,7 +81,6 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             payload = {
                 'id': row['id'],
                 'name': row['name'],
-                'nomenclature_type': row['nomenclature_type'],
                 'accounting_type': row['accounting_type'] or '',
                 'sku': row['sku'] or '',
                 'retail_price': str(row['retail_price'] or '0'),
@@ -97,8 +99,32 @@ class NomenclatureGroupViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     def delete_info(self, request, pk=None):
         """Возвращает кол-во потомков для подтверждения каскадного удаления."""
         group = self.get_object()
-        counts = group.get_descendant_count()
-        return Response(counts)
+        child_groups, items = group.get_descendant_count()
+        return Response({'child_groups': child_groups, 'items': items})
+
+    @action(detail=True, methods=['patch'], url_path='move')
+    def move(self, request, pk=None):
+        """Перемещение группы в другую родительскую группу (или в корень)."""
+        group = self.get_object()
+        new_parent_id = request.data.get('parent', None)
+
+        if new_parent_id:
+            try:
+                new_parent = NomenclatureGroup.objects.get(pk=new_parent_id)
+            except NomenclatureGroup.DoesNotExist:
+                return Response({'detail': 'Родительская группа не найдена.'}, status=400)
+            # Проверка на циклическую вложенность
+            cursor = new_parent
+            while cursor:
+                if cursor.id == group.id:
+                    return Response({'detail': 'Нельзя переместить группу внутрь самой себя.'}, status=400)
+                cursor = cursor.parent
+            group.parent = new_parent
+        else:
+            group.parent = None
+
+        group.save(update_fields=['parent'])
+        return Response({'id': str(group.id), 'parent': str(group.parent_id) if group.parent_id else None})
 
 
 @method_decorator(cache_page(60 * 60 * 24), name='dispatch') # Кеш на сутки, справочник общий
@@ -121,7 +147,7 @@ class NomenclatureViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     serializer_class = NomenclatureSerializer
     queryset = Nomenclature.objects.all()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['nomenclature_type', 'group', 'is_active']
+    filterset_fields = ['accounting_type', 'group', 'is_active']
     search_fields = ['name', 'sku', 'barcode']
     ordering_fields = ['name', 'retail_price', 'created_at']
     ordering = ['name']
@@ -133,7 +159,10 @@ class NomenclatureViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Nomenclature.objects.select_related('group', 'unit')
-        return _tenant_filter(qs, self.request.user)
+        qs = _tenant_filter(qs, self.request.user)
+        if self.request.query_params.get('include_templates') != '1':
+            qs = qs.filter(is_template_placeholder=False)
+        return qs
 
     @action(detail=False, methods=['get'], pagination_class=None, url_path='options')
     def options(self, request):
@@ -158,6 +187,27 @@ class NomenclatureViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             nom.retail_price = Decimal(str(retail))
             nom.save(update_fields=['retail_price'])
         return Response({'id': str(nom.id), 'retail_price': str(nom.retail_price)})
+
+    @action(detail=True, methods=['patch'], url_path='move')
+    def move(self, request, pk=None):
+        """Перемещение позиции в другую группу (или в корень)."""
+        nom = self.get_object()
+        new_group_id = request.data.get('group', None)
+
+        if new_group_id:
+            try:
+                new_group = NomenclatureGroup.objects.get(pk=new_group_id)
+            except NomenclatureGroup.DoesNotExist:
+                return Response({'detail': 'Группа не найдена.'}, status=400)
+            org = _resolve_org(request.user)
+            if org and str(new_group.organization_id) != str(org.id):
+                return Response({'detail': 'Группа принадлежит другой организации.'}, status=400)
+            nom.group = new_group
+        else:
+            nom.group = None
+
+        nom.save(update_fields=['group'])
+        return Response({'id': str(nom.id), 'group': str(nom.group_id) if nom.group_id else None})
 
 
 class BouquetTemplateViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):

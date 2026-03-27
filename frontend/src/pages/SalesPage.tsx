@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Box, Typography, Chip, TextField, MenuItem, Button,
   IconButton, Divider, Autocomplete, Collapse, Tab, Tabs, Paper,
@@ -32,11 +32,11 @@ interface SaleItem {
   id: string; sale: string; nomenclature: string; batch: string | null
   quantity: string; price: string; cost_price: string; discount_percent: string
   total: string; is_custom_bouquet: boolean; nomenclature_name: string
-  nomenclature_type: string; warehouse_name: string; warehouse: string
+  accounting_type: string; warehouse_name: string; warehouse: string
   bouquet_components: { name: string; quantity: string }[]
 }
 interface Ref { id: string; name: string }
-interface NomRef { id: string; name: string; retail_price: string; nomenclature_type: string }
+interface NomRef { id: string; name: string; retail_price: string; accounting_type: string }
 interface CustomerRef { id: string; full_name?: string; first_name?: string; last_name?: string }
 interface UserRef { id: string; full_name: string; username: string }
 interface StockWarehouse {
@@ -78,6 +78,17 @@ interface ShiftReport {
   notes: string
 }
 
+interface SalesHelpersData {
+  tradingPoints: Ref[]
+  paymentMethods: Ref[]
+  customers: CustomerRef[]
+  nomenclatures: NomRef[]
+  users: UserRef[]
+  bouquetTemplates: BouquetTemplateRef[]
+  stockSummary: StockSummary[]
+  promoCodes: { id: string; code: string }[]
+}
+
 // ─── Constants ───
 const STATUS_CHOICES: { value: string; label: string; color: 'warning' | 'success' | 'error' }[] = [
   { value: 'open', label: 'Открыта', color: 'warning' },
@@ -91,6 +102,23 @@ const fmtDateTime = (v: string) => v
   : '—'
 const fmtCurrency = (v: string | number) =>
   v != null ? parseFloat(String(v)).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—'
+
+const getPreferredWarehouseFromSummary = (summary: StockSummary[], nomenclatureId: string) => {
+  const row = summary.find(item => item.nomenclature === nomenclatureId)
+  const warehouses = (row?.warehouses || [])
+    .map(wh => ({
+      id: wh.warehouse,
+      qty: parseFloat(wh.qty) || 0,
+      isDefaultForSales: !!wh.is_default_for_sales,
+    }))
+    .filter(wh => wh.qty > 0)
+
+  if (!warehouses.length) return ''
+
+  const defaults = warehouses.filter(wh => wh.isDefaultForSales)
+  const candidates = defaults.length ? defaults : warehouses
+  return candidates.slice().sort((a, b) => b.qty - a.qty)[0]?.id || ''
+}
 
 // ─── KPI Card ───
 function KpiCard({ label, value, color, Icon }: { label: string; value: string; color: string; Icon: React.ElementType }) {
@@ -126,6 +154,8 @@ export default function SalesPage() {
   const { user } = useAuth()
   const { notify } = useNotification()
   const location = useLocation()
+  const helpersDataRef = useRef<SalesHelpersData | null>(null)
+  const helpersRequestRef = useRef<Promise<SalesHelpersData | null> | null>(null)
 
   // ─── Helper data ───
   const [tradingPoints, setTradingPoints] = useState<Ref[]>([])
@@ -136,10 +166,17 @@ export default function SalesPage() {
   const [bouquetTemplates, setBouquetTemplates] = useState<BouquetTemplateRef[]>([])
   const [stockSummary, setStockSummary] = useState<StockSummary[]>([])
   const [promoCodes, setPromoCodes] = useState<{id: string; code: string}[]>([])
+  const [helpersLoading, setHelpersLoading] = useState(false)
 
   const fetchHelpers = useCallback(async () => {
-    try {
-      const [tpRes, pmRes, custRes, nomRes, usersRes, tplRes, promoRes] = await Promise.all([
+    if (helpersDataRef.current) return helpersDataRef.current
+    if (helpersRequestRef.current) return helpersRequestRef.current
+
+    setHelpersLoading(true)
+    const effectiveTp = user?.active_trading_point || user?.trading_point || null
+    const request = (async (): Promise<SalesHelpersData | null> => {
+      try {
+        const [tpRes, pmRes, custRes, nomRes, usersRes, tplRes, promoRes, stockRes] = await Promise.all([
         api.get('/core/trading-points/'),
         api.get('/core/payment-methods/'),
         api.get('/customers/customers/'),
@@ -147,33 +184,55 @@ export default function SalesPage() {
         api.get('/core/users/'),
         api.get('/nomenclature/bouquet-templates/').catch(() => ({ data: [] })),
         api.get('/marketing/promo-codes/').catch(() => ({ data: [] })),
+        api.get('/inventory/stock/summary/', {
+          params: effectiveTp ? { trading_point: effectiveTp } : undefined,
+        }).catch(() => ({ data: [] })),
       ])
 
-      // Определяем торговую точку для фильтрации остатков:
-      // 1) active_trading_point из профиля (SA / Owner)
-      // 2) trading_point — закреплённая ТТ сотрудника
-      const effectiveTp = user?.active_trading_point || user?.trading_point || null
-      const stockRes = await api.get('/inventory/stock/summary/', {
-        params: effectiveTp ? { trading_point: effectiveTp } : undefined,
-      }).catch(() => ({ data: [] }))
+        const data: SalesHelpersData = {
+          tradingPoints: tpRes.data.results || tpRes.data || [],
+          paymentMethods: pmRes.data.results || pmRes.data || [],
+          customers: custRes.data.results || custRes.data || [],
+          nomenclatures: nomRes.data.results || nomRes.data || [],
+          users: usersRes.data.results || usersRes.data || [],
+          bouquetTemplates: tplRes.data.results || tplRes.data || [],
+          stockSummary: stockRes.data.results || stockRes.data || [],
+          promoCodes: promoRes.data.results || promoRes.data || [],
+        }
 
-      setTradingPoints(tpRes.data.results || tpRes.data || [])
-      setPaymentMethods(pmRes.data.results || pmRes.data || [])
-      setCustomers(custRes.data.results || custRes.data || [])
-      setNomenclatures(nomRes.data.results || nomRes.data || [])
-      setUsers(usersRes.data.results || usersRes.data || [])
-      setBouquetTemplates(tplRes.data.results || tplRes.data || [])
-      setStockSummary(stockRes.data.results || stockRes.data || [])
-      setPromoCodes(promoRes.data.results || promoRes.data || [])
-    } catch (err) { notify(extractError(err, 'Ошибка загрузки справочников'), 'error') }
-  }, [notify, user?.id, user?.active_trading_point])
+        setTradingPoints(data.tradingPoints)
+        setPaymentMethods(data.paymentMethods)
+        setCustomers(data.customers)
+        setNomenclatures(data.nomenclatures)
+        setUsers(data.users)
+        setBouquetTemplates(data.bouquetTemplates)
+        setStockSummary(data.stockSummary)
+        setPromoCodes(data.promoCodes)
+        helpersDataRef.current = data
+        return data
+      } catch (err) {
+        notify(extractError(err, 'Ошибка загрузки справочников'), 'error')
+        return null
+      } finally {
+        setHelpersLoading(false)
+        helpersRequestRef.current = null
+      }
+    })()
 
-  useEffect(() => { fetchHelpers() }, [fetchHelpers])
+    helpersRequestRef.current = request
+    return request
+  }, [notify, user?.active_trading_point, user?.trading_point])
 
   const customerName = (c: CustomerRef) => c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim()
 
   // ─── Tabs ───
   const [tab, setTab] = useState(0)
+
+  useEffect(() => {
+    if (tab === 1) {
+      void fetchHelpers()
+    }
+  }, [tab, fetchHelpers])
 
   // Stock info per nomenclature
   const stockByNom = useMemo(() => {
@@ -292,9 +351,11 @@ export default function SalesPage() {
   const [saleItems, setSaleItems] = useState<ItemRow[]>([emptyItemRow()])
   const [saving, setSaving] = useState(false)
 
-  const openCreateDlg = () => {
+  const openCreateDlg = async () => {
+    const helpers = await fetchHelpers()
+    const availableTradingPoints = helpers?.tradingPoints || helpersDataRef.current?.tradingPoints || tradingPoints
     setEditSale(null)
-    const defaultTradingPoint = user?.active_trading_point || user?.trading_point || (tradingPoints.length === 1 ? tradingPoints[0].id : '')
+    const defaultTradingPoint = user?.active_trading_point || user?.trading_point || (availableTradingPoints.length === 1 ? availableTradingPoints[0].id : '')
     setSaleForm({
       trading_point: defaultTradingPoint,
       customer: '',
@@ -314,34 +375,50 @@ export default function SalesPage() {
     const state = location.state as { prefillSaleItem?: { nomenclature: string; quantity?: string } } | null
     const prefill = state?.prefillSaleItem
     if (!prefill?.nomenclature) return
-    const nom = nomenclatures.find(n => n.id === prefill.nomenclature)
-    const preferredWarehouse = stockByNom[prefill.nomenclature]?.preferredWarehouse || ''
-    const defaultTradingPoint = user?.active_trading_point || user?.trading_point || (tradingPoints.length === 1 ? tradingPoints[0].id : '')
-    setEditSale(null)
-    setSaleForm({
-      trading_point: defaultTradingPoint,
-      customer: '',
-      payment_method: '',
-      notes: '',
-      status: 'completed',
-      seller: user?.id || '',
-      discount_percent: '0',
-      promo_code: '',
-      used_bonuses: '0',
-    })
-    setSaleItems([{
-      nomenclature: prefill.nomenclature,
-      warehouse: preferredWarehouse,
-      quantity: prefill.quantity || '1',
-      price: nom?.retail_price || '',
-      discount_percent: '0',
-      total: '0',
-    }])
-    setSaleDlg(true)
-    window.history.replaceState({}, document.title)
-  }, [location.state, nomenclatures, stockByNom, user?.id, user?.trading_point, tradingPoints])
+    let cancelled = false
 
-  const openEditDlg = (sale: Sale) => {
+    void (async () => {
+      const helpers = await fetchHelpers()
+      if (cancelled) return
+
+      const availableNomenclatures = helpers?.nomenclatures || helpersDataRef.current?.nomenclatures || nomenclatures
+      const availableTradingPoints = helpers?.tradingPoints || helpersDataRef.current?.tradingPoints || tradingPoints
+      const availableStockSummary = helpers?.stockSummary || helpersDataRef.current?.stockSummary || stockSummary
+      const nom = availableNomenclatures.find(n => n.id === prefill.nomenclature)
+      const preferredWarehouse = getPreferredWarehouseFromSummary(availableStockSummary, prefill.nomenclature)
+      const defaultTradingPoint = user?.active_trading_point || user?.trading_point || (availableTradingPoints.length === 1 ? availableTradingPoints[0].id : '')
+
+      setEditSale(null)
+      setSaleForm({
+        trading_point: defaultTradingPoint,
+        customer: '',
+        payment_method: '',
+        notes: '',
+        status: 'completed',
+        seller: user?.id || '',
+        discount_percent: '0',
+        promo_code: '',
+        used_bonuses: '0',
+      })
+      setSaleItems([{
+        nomenclature: prefill.nomenclature,
+        warehouse: preferredWarehouse,
+        quantity: prefill.quantity || '1',
+        price: nom?.retail_price || '',
+        discount_percent: '0',
+        total: '0',
+      }])
+      setSaleDlg(true)
+      window.history.replaceState({}, document.title)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [location.state, fetchHelpers, user?.id, user?.trading_point, user?.active_trading_point])
+
+  const openEditDlg = async (sale: Sale) => {
+    await fetchHelpers()
     setEditSale(sale)
     setSaleForm({
       trading_point: sale.trading_point || '',
@@ -605,8 +682,8 @@ export default function SalesPage() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5" fontWeight={700}>Продажи</Typography>
         {tab === 0 && (
-          <Button variant="contained" startIcon={<ShoppingCart />} onClick={openCreateDlg}>
-            Новая продажа
+          <Button variant="contained" startIcon={<ShoppingCart />} onClick={() => { void openCreateDlg() }}>
+            {helpersLoading ? 'Загрузка справочников...' : 'Новая продажа'}
           </Button>
         )}
         {tab === 1 && (
@@ -892,7 +969,7 @@ export default function SalesPage() {
           const stock = stockByNom[item.nomenclature]
           const itemNom = nomenclatures.find(n => n.id === item.nomenclature)
           const currentWarehouse = stock?.warehouses.find(w => w.id === item.warehouse)
-          const composition = (itemNom?.nomenclature_type === 'bouquet' || itemNom?.nomenclature_type === 'composition')
+          const composition = (itemNom?.accounting_type === 'finished_bouquet')
             ? (bouquetTemplates.find(t => t.nomenclature === item.nomenclature)?.components || []).map(c => ({ name: c.nomenclature_name, quantity: c.quantity }))
             : []
           return (
@@ -998,7 +1075,7 @@ export default function SalesPage() {
       <EntityFormDialog
         open={detailDlg}
         onClose={() => { setDetailDlg(false); setDetailSale(null) }}
-        onSubmit={() => detailSale && openEditDlg(detailSale)}
+        onSubmit={() => { if (detailSale) { void openEditDlg(detailSale) } }}
         title={detailSale ? `Продажа #${detailSale.number}` : 'Продажа'}
         loading={detailLoading}
         submitText="Редактировать"

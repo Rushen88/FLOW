@@ -65,20 +65,6 @@ class MeasureUnit(models.Model):
 class Nomenclature(SoftDeletableModel):
     """Номенклатура товаров."""
 
-    class NomenclatureType(models.TextChoices):
-        SINGLE_FLOWER = 'single_flower', 'Штучный цветок'
-        BOUQUET = 'bouquet', 'Готовый букет'
-        COMPOSITION = 'composition', 'Композиция'
-        PACKAGING = 'packaging', 'Упаковка'
-        ACCESSORY = 'accessory', 'Аксессуар'
-        RIBBON = 'ribbon', 'Лента'
-        TOY = 'toy', 'Игрушка'
-        POSTCARD = 'postcard', 'Открытка'
-        EXTRA_GOOD = 'extra_good', 'Сопутствующий товар'
-        BALLOON = 'balloon', 'Воздушный шар'
-        POT_PLANT = 'pot_plant', 'Горшечное растение'
-        SERVICE = 'service', 'Услуга'
-
     class AccountingType(models.TextChoices):
         STOCK_MATERIAL = 'stock_material', 'Складской материал'
         FINISHED_BOUQUET = 'finished_bouquet', 'Готовые букеты'
@@ -94,13 +80,12 @@ class Nomenclature(SoftDeletableModel):
         related_name='nomenclatures', verbose_name='Группа',
     )
     name = models.CharField('Название', max_length=500)
-    nomenclature_type = models.CharField(
-        'Тип', max_length=20, choices=NomenclatureType.choices,
-        default=NomenclatureType.SINGLE_FLOWER,
-    )
     accounting_type = models.CharField(
         'Тип учёта', max_length=20, choices=AccountingType.choices,
         default=AccountingType.STOCK_MATERIAL,
+    )
+    is_template_placeholder = models.BooleanField(
+        'Служебная позиция шаблона', default=False, db_index=True,
     )
     sku = models.CharField('Артикул', max_length=50, blank=True, default='')
     barcode = models.CharField('Штрихкод', max_length=50, blank=True, default='')
@@ -139,7 +124,6 @@ class Nomenclature(SoftDeletableModel):
         verbose_name = 'Номенклатура'
         verbose_name_plural = 'Номенклатура'
         indexes = [
-            models.Index(fields=['organization', 'nomenclature_type']),
             models.Index(fields=['organization', 'is_active', 'is_deleted']),
             models.Index(fields=['organization', 'accounting_type']),
         ]
@@ -197,9 +181,12 @@ class BouquetTemplate(models.Model):
 
     def delete(self, *args, **kwargs):
         # Удаляем фото шаблона при удалении
+        linked_nomenclature = self.nomenclature
         if self.image:
             self.image.delete(save=False)
         super().delete(*args, **kwargs)
+        if linked_nomenclature and linked_nomenclature.is_template_placeholder:
+            linked_nomenclature.delete()
 
 
 class BouquetComponent(models.Model):

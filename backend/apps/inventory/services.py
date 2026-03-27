@@ -39,7 +39,7 @@ def build_stock_summary(organization, trading_point_id=None, warehouse_id=None):
         organization=organization,
         quantity__gt=0,
     ).select_related('nomenclature', 'warehouse', 'warehouse__trading_point')
-    qs = qs.exclude(nomenclature__nomenclature_type='service')
+    qs = qs.exclude(nomenclature__accounting_type='service')
 
     if trading_point_id:
         qs = qs.filter(warehouse__trading_point_id=trading_point_id)
@@ -190,7 +190,7 @@ def process_batch_receipt(
     Оприходование партии товара.
     Создаёт Batch + StockMovement(receipt) + обновляет StockBalance.
     """
-    if getattr(nomenclature, 'nomenclature_type', '') == 'service':
+    if getattr(nomenclature, 'accounting_type', '') == 'service':
         raise ValueError('Услуги нельзя проводить через поступления.')
 
     if arrival_date is None:
@@ -352,7 +352,7 @@ def process_sale_items(sale, items_data, user=None):
 @transaction.atomic
 def assemble_bouquet(
     organization, nomenclature_bouquet, warehouse_from, warehouse_to,
-    components, quantity=1, user=None, notes='',
+    components, quantity=1, user=None, notes='', snapshot_source_mode='template',
 ):
     """
     Сборка букета.
@@ -375,7 +375,7 @@ def assemble_bouquet(
         comp_warehouse = comp.get('warehouse') or warehouse_from
 
         # Услуги не участвуют в складском учёте — пропускаем FIFO-списание
-        if comp_nomenclature.nomenclature_type == 'service':
+        if comp_nomenclature.accounting_type == 'service':
             continue
 
         # В ручной сборке мы не разрешаем уход в минус (в отличие от продаж).
@@ -443,16 +443,16 @@ def assemble_bouquet(
     from .models import BouquetBatchComponentSnapshot
     for idx, comp in enumerate(components):
         comp_nom = comp['nomenclature']
-        if comp_nom.nomenclature_type == 'service':
+        if comp_nom.accounting_type == 'service':
             continue
         BouquetBatchComponentSnapshot.objects.create(
             batch=batch,
             nomenclature=comp_nom,
             accounting_type=getattr(comp_nom, 'accounting_type', 'stock_material'),
             quantity_per_unit=Decimal(str(comp['quantity'])),
-            price_per_unit=comp_nom.purchase_price,
+            price_per_unit=comp_nom.retail_price,
             sort_order=idx,
-            source_mode='template',
+            source_mode=snapshot_source_mode,
         )
 
     return batch
@@ -721,7 +721,7 @@ def correct_bouquet_stock(
 
     for row in rows:
         nomenclature = row['nomenclature']
-        if nomenclature.nomenclature_type == 'service':
+        if nomenclature.accounting_type == 'service':
             continue
 
         writeoff_qty = Decimal(str(row.get('writeoff_qty', 0) or 0))

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Box, Typography, Chip, TextField, MenuItem, Button,
   IconButton, Divider, Switch, FormControlLabel, ToggleButtonGroup, ToggleButton, Card, CardContent,
@@ -43,6 +43,15 @@ interface CustomerRef { id: string; full_name?: string; first_name?: string; las
 interface UserRef { id: string; full_name: string; username: string }
 interface CourierRef { id: string; name: string }
 
+interface OrderHelpersData {
+  tradingPoints: Ref[]
+  paymentMethods: Ref[]
+  customers: CustomerRef[]
+  nomenclatures: NomRef[]
+  users: UserRef[]
+  couriers: CourierRef[]
+}
+
 // ─── Constants ───
 const STATUS_CHOICES: { value: string; label: string; color: 'info' | 'primary' | 'warning' | 'secondary' | 'success' | 'error' | 'default' }[] = [
   { value: 'new', label: 'Новый', color: 'info' },
@@ -75,6 +84,8 @@ const emptyItemRow = () => ({ nomenclature: '', quantity: '1', price: '', discou
 export default function OrdersPage() {
   const { notify } = useNotification()
   const { user } = useAuth()
+  const helpersDataRef = useRef<OrderHelpersData | null>(null)
+  const helpersRequestRef = useRef<Promise<OrderHelpersData | null> | null>(null)
 
   // ─── Helper data ───
   const [tradingPoints, setTradingPoints] = useState<Ref[]>([])
@@ -83,10 +94,16 @@ export default function OrdersPage() {
   const [nomenclatures, setNomenclatures] = useState<NomRef[]>([])
   const [users, setUsers] = useState<UserRef[]>([])
   const [couriers, setCouriers] = useState<CourierRef[]>([])
+  const [helpersLoading, setHelpersLoading] = useState(false)
 
   const fetchHelpers = useCallback(async () => {
-    try {
-      const [tpRes, pmRes, custRes, nomRes, usersRes, courRes] = await Promise.all([
+    if (helpersDataRef.current) return helpersDataRef.current
+    if (helpersRequestRef.current) return helpersRequestRef.current
+
+    setHelpersLoading(true)
+    const request = (async (): Promise<OrderHelpersData | null> => {
+      try {
+        const [tpRes, pmRes, custRes, nomRes, usersRes, courRes] = await Promise.all([
         api.get('/core/trading-points/'),
         api.get('/core/payment-methods/'),
         api.get('/customers/customers/'),
@@ -94,16 +111,35 @@ export default function OrdersPage() {
         api.get('/core/users/'),
         api.get('/delivery/couriers/'),
       ])
-      setTradingPoints(tpRes.data.results || tpRes.data || [])
-      setPaymentMethods(pmRes.data.results || pmRes.data || [])
-      setCustomers(custRes.data.results || custRes.data || [])
-      setNomenclatures(nomRes.data.results || nomRes.data || [])
-      setUsers(usersRes.data.results || usersRes.data || [])
-      setCouriers(courRes.data.results || courRes.data || [])
-    } catch (err) { notify(extractError(err, 'Ошибка загрузки справочников'), 'error') }
-  }, [notify, user?.active_trading_point])
+        const data: OrderHelpersData = {
+          tradingPoints: tpRes.data.results || tpRes.data || [],
+          paymentMethods: pmRes.data.results || pmRes.data || [],
+          customers: custRes.data.results || custRes.data || [],
+          nomenclatures: nomRes.data.results || nomRes.data || [],
+          users: usersRes.data.results || usersRes.data || [],
+          couriers: courRes.data.results || courRes.data || [],
+        }
 
-  useEffect(() => { fetchHelpers() }, [fetchHelpers])
+        setTradingPoints(data.tradingPoints)
+        setPaymentMethods(data.paymentMethods)
+        setCustomers(data.customers)
+        setNomenclatures(data.nomenclatures)
+        setUsers(data.users)
+        setCouriers(data.couriers)
+        helpersDataRef.current = data
+        return data
+      } catch (err) {
+        notify(extractError(err, 'Ошибка загрузки справочников'), 'error')
+        return null
+      } finally {
+        setHelpersLoading(false)
+        helpersRequestRef.current = null
+      }
+    })()
+
+    helpersRequestRef.current = request
+    return request
+  }, [notify])
 
   const customerName = (c: CustomerRef) => c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim()
 
@@ -150,7 +186,8 @@ export default function OrdersPage() {
   const [orderItems, setOrderItems] = useState<{ nomenclature: string; quantity: string; price: string; discount_percent: string }[]>([emptyItemRow()])
   const [saving, setSaving] = useState(false)
 
-  const openCreateDlg = () => {
+  const openCreateDlg = async () => {
+    await fetchHelpers()
     setOrderForm({
       trading_point: '', source: 'shop', customer: '',
       recipient_name: '', recipient_phone: '', delivery_address: '',
@@ -374,8 +411,8 @@ export default function OrdersPage() {
     <Box>
       <Box sx={{ display: "flex", justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h5" fontWeight={700}>Заказы</Typography>
-        <Button variant="contained" startIcon={<Add />} onClick={openCreateDlg}>
-          Новый заказ
+        <Button variant="contained" startIcon={<Add />} onClick={() => { void openCreateDlg() }}>
+          {helpersLoading ? 'Загрузка справочников...' : 'Новый заказ'}
         </Button>
       </Box>
 

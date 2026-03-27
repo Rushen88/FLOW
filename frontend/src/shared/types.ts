@@ -63,19 +63,7 @@ export interface User {
 export type UserRole = 'owner' | 'admin' | 'manager' | 'seller' | 'courier' | 'accountant'
 
 // ─── Nomenclature ───────────────────────────────────────────
-export type NomenclatureType =
-  | 'single_flower'
-  | 'bouquet'
-  | 'composition'
-  | 'packaging'
-  | 'accessory'
-  | 'ribbon'
-  | 'toy'
-  | 'postcard'
-  | 'extra_good'
-  | 'balloon'
-  | 'pot_plant'
-  | 'service'
+export type AccountingType = 'stock_material' | 'finished_bouquet' | 'service'
 
 export interface Nomenclature {
   id: string
@@ -83,7 +71,7 @@ export interface Nomenclature {
   group: string | null
   group_name: string
   name: string
-  nomenclature_type: NomenclatureType
+  accounting_type: AccountingType
   sku: string
   barcode: string
   unit: string | null
@@ -218,7 +206,7 @@ export interface SaleItem {
   sale: string
   nomenclature: string
   nomenclature_name: string
-  nomenclature_type: NomenclatureType
+  accounting_type: AccountingType
   batch: string | null
   warehouse_name: string
   quantity: string

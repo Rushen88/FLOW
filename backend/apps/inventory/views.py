@@ -3,6 +3,7 @@ from django.db import transaction as db_transaction
 from django.db.models import F, Q
 from django.utils import timezone
 import datetime
+import json
 
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
@@ -19,6 +20,7 @@ from .services import (
     write_off_stock, transfer_stock, InsufficientStockError, build_stock_summary, correct_bouquet_stock,
 )
 from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter
+from apps.core.image_utils import compress_uploaded_image
 
 
 def _validate_org_fk(instance, org, label='Объект'):
@@ -32,6 +34,14 @@ def _validate_org_fk(instance, org, label='Объект'):
         raise DRFValidationError({
             'detail': f'{label} принадлежит другой организации.'
         })
+
+
+def _as_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
 
 
 class BatchViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
@@ -51,7 +61,7 @@ class BatchViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Batch.objects.select_related('nomenclature', 'warehouse', 'supplier')
         qs = _tenant_filter(qs, self.request.user, tp_field='warehouse__trading_point')
-        return qs.exclude(nomenclature__nomenclature_type='service')
+        return qs.exclude(nomenclature__accounting_type='service')
 
     def create(self, request, *args, **kwargs):
         """Создание партии через сервисный слой (с auto-receipt)."""
@@ -75,7 +85,7 @@ class BatchViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             if data.get('supplier'):
                 supplier = Supplier.objects.get(pk=data['supplier'])
 
-            if nomenclature.nomenclature_type == 'service':
+            if nomenclature.accounting_type == 'service':
                 return Response(
                     {'nomenclature': ['Услуги нельзя проводить через поступления.']},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -126,10 +136,10 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         qs = _tenant_filter(qs, self.request.user, tp_field='warehouse__trading_point')
         return (
             qs
-            .exclude(nomenclature__nomenclature_type='service')
+            .exclude(nomenclature__accounting_type='service')
             .exclude(
                 Q(quantity=0)
-                & Q(nomenclature__nomenclature_type__in=['bouquet', 'composition'])
+                & Q(nomenclature__accounting_type='finished_bouquet')
             )
             .order_by('nomenclature__name')
         )
@@ -338,6 +348,10 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         org = _resolve_org(request.user)
         data = request.data
         try:
+            raw_components = data.get('components', [])
+            if isinstance(raw_components, str):
+                raw_components = json.loads(raw_components or '[]')
+
             wh_from = Warehouse.objects.get(pk=data['warehouse_from'])
             wh_to = Warehouse.objects.get(pk=data['warehouse_to'])
             qty = int(data.get('quantity', 1))
@@ -357,7 +371,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 bouquet_nom = Nomenclature.objects.create(
                     organization=org,
                     name=bouquet_name_input,
-                    nomenclature_type='bouquet',
+                    accounting_type='finished_bouquet',
                 )
                 is_individual = True
             else:
@@ -372,7 +386,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 assembler = User.objects.filter(pk=assembler_id, organization=org).first() or request.user
 
             # Для индивидуальной сборки use_template всегда False
-            use_template = (not is_individual) and data.get('use_template', True)
+            use_template = (not is_individual) and _as_bool(data.get('use_template'), True)
             if use_template:
                 # Загружаем компоненты из шаблона
                 try:
@@ -393,7 +407,7 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             else:
                 # Индивидуальная сборка
                 components = []
-                for c in data.get('components', []):
+                for c in raw_components:
                     comp_nom = Nomenclature.objects.get(pk=c['nomenclature'])
                     _validate_org_fk(comp_nom, org, 'Компонент')
                     comp_wh = wh_from
@@ -407,8 +421,8 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                     })
 
             # Переопределение складов/количеств компонентов при сборке из шаблона
-            if use_template and data.get('components'):
-                overrides = {str(c.get('nomenclature')): c for c in data.get('components', []) if c.get('nomenclature')}
+            if use_template and raw_components:
+                overrides = {str(c.get('nomenclature')): c for c in raw_components if c.get('nomenclature')}
                 updated_components = []
                 for comp in components:
                     override = overrides.get(str(comp['nomenclature'].id))
@@ -441,10 +455,22 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                 quantity=qty,
                 user=assembler,
                 notes=data.get('notes', ''),
+                snapshot_source_mode='template' if use_template else 'manual',
             )
 
+            selling_price = data.get('selling_price')
+            if selling_price not in (None, ''):
+                bouquet_nom.retail_price = Decimal(str(selling_price))
+                bouquet_nom.save(update_fields=['retail_price'])
+
+            image_file = request.FILES.get('image')
+            if image_file:
+                if batch.image:
+                    batch.image.delete(save=False)
+                batch.image.save(image_file.name, compress_uploaded_image(image_file), save=True)
+
             # Опционально сохранить/обновить шаблон составом текущей сборки
-            if data.get('add_to_templates'):
+            if _as_bool(data.get('add_to_templates')):
                 template, _ = BouquetTemplate.objects.get_or_create(
                     nomenclature=bouquet_nom,
                     defaults={
@@ -467,6 +493,11 @@ class StockMovementViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
                         quantity=Decimal(str(comp['quantity'])),
                         is_required=True,
                     )
+
+                if image_file:
+                    if template.image:
+                        template.image.delete(save=False)
+                    template.image.save(image_file.name, compress_uploaded_image(image_file), save=True)
 
             return Response({
                 'status': 'ok',

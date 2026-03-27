@@ -55,19 +55,10 @@ export const MOVEMENT_TYPES = [
   { value: 'correction', label: 'Коррекция', color: 'info' as const },
 ] as const
 
-// ─── Nomenclature Types ─────────────────────────────────────
-export const NOMENCLATURE_TYPES = [
-  { value: 'single_flower', label: 'Штучный цветок' },
-  { value: 'bouquet', label: 'Готовый букет' },
-  { value: 'composition', label: 'Композиция' },
-  { value: 'packaging', label: 'Упаковка' },
-  { value: 'accessory', label: 'Аксессуар' },
-  { value: 'ribbon', label: 'Лента' },
-  { value: 'toy', label: 'Игрушка' },
-  { value: 'postcard', label: 'Открытка' },
-  { value: 'extra_good', label: 'Сопутствующий товар' },
-  { value: 'balloon', label: 'Воздушный шар' },
-  { value: 'pot_plant', label: 'Горшечное растение' },
+// ─── Accounting Types ───────────────────────────────────────
+export const ACCOUNTING_TYPES = [
+  { value: 'stock_material', label: 'Складской материал' },
+  { value: 'finished_bouquet', label: 'Готовый букет' },
   { value: 'service', label: 'Услуга' },
 ] as const
 

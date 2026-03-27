@@ -21,7 +21,7 @@ from apps.inventory.models import (
 from apps.inventory.services import (
     fifo_write_off, _update_stock_balance, InsufficientStockError,
 )
-from apps.nomenclature.models import Nomenclature
+from apps.nomenclature.models import Nomenclature, NomenclatureGroup
 
 from .serializers import (
     SalesCategorySerializer, ReserveCashierSerializer, ReserveCreateSerializer,
@@ -32,6 +32,20 @@ from .serializers import (
 # ─── Helpers ────────────────────────────────────────────────
 def _normalize_phone(phone: str) -> str:
     return re.sub(r'\D', '', phone)
+
+
+def _bouquet_image_url(batch, nomenclature):
+    if getattr(batch, 'image', None):
+        return batch.image.url
+    try:
+        template = nomenclature.bouquet_template
+    except Exception:
+        template = None
+    if template and getattr(template, 'image', None):
+        return template.image.url
+    if getattr(nomenclature, 'image', None):
+        return nomenclature.image.url
+    return ''
 
 
 def _ensure_default_categories(org):
@@ -124,13 +138,38 @@ class CashierFeedView(viewsets.ViewSet):
 
         return Response(items)
 
+    def _expand_category_group_ids(self, org, category):
+        root_group_ids = list(category.groups.values_list('id', flat=True))
+        if not root_group_ids:
+            return set()
+
+        children_map = defaultdict(list)
+        for group_id, parent_id in NomenclatureGroup.objects.filter(
+            organization=org,
+        ).values_list('id', 'parent_id'):
+            if parent_id:
+                children_map[parent_id].append(group_id)
+
+        expanded_ids = set(root_group_ids)
+        stack = list(root_group_ids)
+        while stack:
+            current_group_id = stack.pop()
+            for child_group_id in children_map.get(current_group_id, []):
+                if child_group_id in expanded_ids:
+                    continue
+                expanded_ids.add(child_group_id)
+                stack.append(child_group_id)
+
+        return expanded_ids
+
     def _feed_nomenclature(self, org, tp_id, category, q):
         qs = Nomenclature.objects.filter(
             organization=org, is_active=True, is_deleted=False,
             accounting_type__in=['stock_material', 'service'],
         )
         if category and category.groups.exists():
-            qs = qs.filter(group__in=category.groups.all())
+            group_ids = self._expand_category_group_ids(org, category)
+            qs = qs.filter(group_id__in=group_ids)
         if q:
             qs = qs.filter(Q(name__icontains=q) | Q(sku__icontains=q))
 
@@ -188,7 +227,7 @@ class CashierFeedView(viewsets.ViewSet):
         ).values('batch_id').annotate(total=Sum('quantity')):
             reserved[str(r['batch_id'])] = r['total']
 
-        batch_qs = batch_qs.select_related('nomenclature', 'warehouse')
+        batch_qs = batch_qs.select_related('nomenclature', 'warehouse', 'nomenclature__bouquet_template')
         result = []
         for batch in batch_qs[:100]:
             avail = batch.remaining - reserved.get(str(batch.id), Decimal('0'))
@@ -200,7 +239,7 @@ class CashierFeedView(viewsets.ViewSet):
                 'item_id': str(batch.id),
                 'title': nom.name,
                 'subtitle': f'Склад: {batch.warehouse.name}',
-                'image': nom.image.url if nom.image else '',
+                'image': _bouquet_image_url(batch, nom),
                 'price': nom.retail_price,
                 'available_qty': avail,
                 'badge': 'Букет',
@@ -209,6 +248,7 @@ class CashierFeedView(viewsets.ViewSet):
                     'batch': str(batch.id),
                     'warehouse': str(batch.warehouse_id),
                     'source_mode': 'ready_bouquet',
+                    'accounting_type': nom.accounting_type,
                 },
                 'reserve_id': '',
                 'reserve_number': 0,
@@ -231,8 +271,9 @@ class CashierFeedView(viewsets.ViewSet):
                 | Q(phone__icontains=q)
                 | Q(phone_last4__endswith=q[-4:] if len(q) >= 4 else q)
                 | Q(reserve_number__icontains=q)
+                | Q(order__number__icontains=q)
             )
-        qs = qs.select_related('bouquet_nomenclature', 'batch', 'warehouse')
+        qs = qs.select_related('bouquet_nomenclature', 'bouquet_nomenclature__bouquet_template', 'batch', 'warehouse')
         qs = qs.order_by('expires_at', 'created_at')[:50]
 
         result = []
@@ -243,7 +284,7 @@ class CashierFeedView(viewsets.ViewSet):
                 'item_id': str(r.id),
                 'title': nom.name if nom else 'Резерв',
                 'subtitle': f'#{r.reserve_number}  {r.customer_name_snapshot}',
-                'image': nom.image.url if nom and nom.image else '',
+                'image': _bouquet_image_url(r.batch, nom) if nom and r.batch else (nom.image.url if nom and nom.image else ''),
                 'price': nom.retail_price if nom else Decimal('0'),
                 'available_qty': r.quantity,
                 'badge': 'Резерв',
@@ -253,6 +294,7 @@ class CashierFeedView(viewsets.ViewSet):
                     'warehouse': str(r.warehouse_id),
                     'reserve': str(r.id),
                     'source_mode': 'reserve',
+                    'accounting_type': nom.accounting_type if nom else '',
                 },
                 'reserve_id': str(r.id),
                 'reserve_number': r.reserve_number or 0,
@@ -292,6 +334,7 @@ class ReserveViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
             return Response({'detail': 'Не задана организация/точка.'}, status=400)
 
         from apps.core.models import Warehouse
+        from apps.sales.services import lock_organization_row
         nom = Nomenclature.objects.get(pk=d['bouquet_nomenclature'])
         batch = Batch.objects.get(pk=d['batch'])
         wh = Warehouse.objects.get(pk=d['warehouse'])
@@ -299,6 +342,7 @@ class ReserveViewSet(OrgPerformCreateMixin, viewsets.ModelViewSet):
         phone = d.get('phone', '')
         phone_norm = _normalize_phone(phone)
 
+        lock_organization_row(org.id)
         next_number = (Reserve.objects.filter(organization=org).aggregate(
             mx=Max('reserve_number'))['mx'] or 0) + 1
 
@@ -383,7 +427,10 @@ class CheckoutView(viewsets.ViewSet):
 
         # Create Sale
         from apps.core.models import PaymentMethod
-        sale_number = (Sale.objects.filter(organization=org).count()) + 1
+        from apps.sales.services import generate_sale_number, lock_organization_row
+
+        lock_organization_row(org.id)
+        sale_number = generate_sale_number(org)
         sale = Sale.objects.create(
             organization=org,
             trading_point=tp,
@@ -434,9 +481,15 @@ class CheckoutView(viewsets.ViewSet):
                 total_cost += cost
 
         # Update Sale totals
+        header_discount_percent = Decimal(str(d.get('discount_percent', 0) or 0))
+        header_discount_amount = Decimal(str(d.get('discount_amount', 0) or 0))
+        total_discount = (subtotal * header_discount_percent / Decimal('100')) + header_discount_amount
+
         sale.subtotal = subtotal
-        sale.total = subtotal - sale.discount_amount
-        sale.save(update_fields=['subtotal', 'total'])
+        sale.discount_percent = header_discount_percent
+        sale.discount_amount = total_discount
+        sale.total = max(subtotal - total_discount, Decimal('0'))
+        sale.save(update_fields=['subtotal', 'discount_percent', 'discount_amount', 'total'])
 
         # Financial transaction
         from apps.finance.models import FinancialTransaction, CashShift
@@ -552,9 +605,10 @@ class CheckoutView(viewsets.ViewSet):
             )
 
         # Delete showcase photo if sold completely
-        if batch.remaining <= 0 and nom.image:
-            # Only delete if it's a showcase photo (not template)
-            pass
+        if batch.remaining <= 0 and batch.image:
+            batch.image.delete(save=False)
+            batch.image = None
+            batch.save(update_fields=['image'])
 
         return cost_price * qty
 
@@ -610,6 +664,11 @@ class CheckoutView(viewsets.ViewSet):
         reserve.sold_sale = sale
         reserve.sold_at = timezone.now()
         reserve.save(update_fields=['status', 'sold_sale', 'sold_at', 'updated_at'])
+
+        if batch.remaining <= 0 and batch.image:
+            batch.image.delete(save=False)
+            batch.image = None
+            batch.save(update_fields=['image'])
 
         return cost_price * qty
 
