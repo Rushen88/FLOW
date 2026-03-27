@@ -13,6 +13,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 
+from rest_framework.exceptions import ValidationError as DRFValidationError
+
 from apps.core.mixins import OrgPerformCreateMixin, _tenant_filter, _resolve_org, _resolve_tp
 from apps.sales.models import SalesCategory, Sale, SaleItem, SaleItemComposition
 from apps.inventory.models import (
@@ -187,6 +189,7 @@ class CashierFeedView(viewsets.ViewSet):
             badge = ''
             if nom.accounting_type == 'service':
                 badge = 'Услуга'
+                avail = Decimal('999999')
             result.append({
                 'source_type': 'nomenclature',
                 'item_id': str(nom.id),
@@ -458,27 +461,36 @@ class CheckoutView(viewsets.ViewSet):
         subtotal = Decimal('0')
         total_cost = Decimal('0')
 
-        for line in lines:
-            sm = line['source_mode']
-            nom = Nomenclature.objects.select_for_update().get(pk=line['nomenclature'])
-            qty = Decimal(str(line['quantity']))
-            price = Decimal(str(line['price']))
-            discount = Decimal(str(line.get('discount_percent', 0)))
-            line_total = price * qty * (1 - discount / 100)
-            subtotal += line_total
+        try:
+            for line in lines:
+                sm = line['source_mode']
+                nom = Nomenclature.objects.select_for_update().get(pk=line['nomenclature'])
+                qty = Decimal(str(line['quantity']))
+                price = Decimal(str(line['price']))
+                discount = Decimal(str(line.get('discount_percent', 0)))
+                line_total = price * qty * (1 - discount / 100)
+                subtotal += line_total
 
-            if sm == 'catalog':
-                # Обычный товар или услуга
-                cost = self._sell_catalog(org, nom, qty, line, sale, request.user)
-                total_cost += cost
+                if sm == 'catalog':
+                    # Обычный товар или услуга
+                    cost = self._sell_catalog(org, nom, qty, line, sale, request.user)
+                    total_cost += cost
 
-            elif sm == 'ready_bouquet':
-                cost = self._sell_bouquet(org, nom, qty, price, discount, line, sale, request.user)
-                total_cost += cost
+                elif sm == 'ready_bouquet':
+                    cost = self._sell_bouquet(org, nom, qty, price, discount, line, sale, request.user)
+                    total_cost += cost
 
-            elif sm == 'reserve':
-                cost = self._sell_reserve(org, nom, qty, price, discount, line, sale, request.user)
-                total_cost += cost
+                elif sm == 'reserve':
+                    cost = self._sell_reserve(org, nom, qty, price, discount, line, sale, request.user)
+                    total_cost += cost
+        except InsufficientStockError as e:
+            raise DRFValidationError({'detail': str(e)})
+        except Nomenclature.DoesNotExist:
+            raise DRFValidationError({'detail': 'Номенклатурная позиция не найдена.'})
+        except Batch.DoesNotExist:
+            raise DRFValidationError({'detail': 'Партия не найдена.'})
+        except Reserve.DoesNotExist:
+            raise DRFValidationError({'detail': 'Резерв не найден.'})
 
         # Update Sale totals
         header_discount_percent = Decimal(str(d.get('discount_percent', 0) or 0))

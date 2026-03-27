@@ -109,6 +109,10 @@ export default function CashierPage() {
   const [checkoutRefsLoading, setCheckoutRefsLoading] = useState(false)
   const [checkoutRefsLoaded, setCheckoutRefsLoaded] = useState(false)
 
+  // ─── Shift ───
+  const [shiftOpen, setShiftOpen] = useState(true)
+  const [shiftChecked, setShiftChecked] = useState(false)
+
   // ═══ Fetch Categories ═══
   const fetchCategories = useCallback(() => {
     api.get('/cashier/categories/')
@@ -121,6 +125,17 @@ export default function CashierPage() {
       })
       .catch(() => notify('Ошибка загрузки категорий', 'error'))
   }, [notify])
+
+  // ═══ Check Shift ═══
+  const checkShift = useCallback(() => {
+    api.get('/finance/cash-shifts/', { params: { status: 'open' } })
+      .then(res => {
+        const list = res.data.results || res.data || []
+        setShiftOpen(list.length > 0)
+      })
+      .catch(() => setShiftOpen(false))
+      .finally(() => setShiftChecked(true))
+  }, [])
 
   // ═══ Fetch Feed ═══
   const fetchFeed = useCallback(() => {
@@ -172,6 +187,7 @@ export default function CashierPage() {
   }, [checkoutRefsLoaded])
 
   useEffect(() => { fetchCategories() }, [fetchCategories])
+  useEffect(() => { checkShift() }, [checkShift])
   useEffect(() => { fetchFeed() }, [fetchFeed])
   useEffect(() => {
     if (!checkoutOpen) return
@@ -234,7 +250,7 @@ export default function CashierPage() {
         price: parseFloat(item.price) || 0,
         quantity: 1,
         discount_percent: 0,
-        available_qty: parseFloat(item.available_qty) || 999,
+        available_qty: item.payload.accounting_type === 'service' ? 999999 : (parseFloat(item.available_qty) || 0),
         image: item.image || '',
       }]
     })
@@ -247,6 +263,15 @@ export default function CashierPage() {
       if (newQty < 1) return c
       if (newQty > c.available_qty && c.source_mode !== 'catalog') return c
       return { ...c, quantity: newQty }
+    }))
+  }
+
+  const setCartQty = (key: string, value: number) => {
+    const qty = Math.max(1, Math.floor(value) || 1)
+    setCart(prev => prev.map(c => {
+      if (c.key !== key) return c
+      if (qty > c.available_qty && c.source_mode !== 'catalog') return { ...c, quantity: c.available_qty }
+      return { ...c, quantity: qty }
     }))
   }
 
@@ -307,6 +332,23 @@ export default function CashierPage() {
       notify(extractError(err, 'Ошибка оформления продажи'), 'error')
     }
     setCheckoutSaving(false)
+  }
+
+  if (shiftChecked && !shiftOpen) {
+    return (
+      <Box sx={{
+        height: 'calc(100vh - 80px)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexDirection: 'column', gap: 2,
+      }}>
+        <PointOfSale sx={{ fontSize: 64, color: 'text.disabled' }} />
+        <Typography variant="h5" color="text.secondary" fontWeight={600}>
+          Касса недоступна
+        </Typography>
+        <Typography color="text.secondary">
+          Для работы с кассой необходимо открыть смену
+        </Typography>
+      </Box>
+    )
   }
 
   return (
@@ -380,7 +422,12 @@ export default function CashierPage() {
                       </Box>
                     )}
                     <CardContent sx={{ flex: 1, py: 1, px: 1.5, '&:last-child': { pb: 1 } }}>
-                      <Typography variant="body2" fontWeight={600} noWrap>{item.title}</Typography>
+                      <Tooltip title={item.title} enterDelay={600}>
+                        <Typography variant="body2" fontWeight={600} sx={{
+                          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden', lineHeight: 1.3, minHeight: '2.6em',
+                        }}>{item.title}</Typography>
+                      </Tooltip>
                       {item.subtitle && <Typography variant="caption" color="text.secondary" noWrap>{item.subtitle}</Typography>}
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0.5 }}>
                         <Typography variant="body2" fontWeight={700} color="primary">
@@ -390,7 +437,7 @@ export default function CashierPage() {
                           <Chip label={item.badge} size="small" color={SOURCE_COLORS[item.source_type] || 'default'} sx={{ height: 20, fontSize: 11 }} />
                         )}
                       </Box>
-                      {item.source_type !== 'reserve' && parseFloat(item.available_qty) > 0 && (
+                      {item.source_type !== 'reserve' && item.payload?.accounting_type !== 'service' && parseFloat(item.available_qty) > 0 && (
                         <Typography variant="caption" color="text.secondary">
                           В наличии: {parseFloat(item.available_qty)}
                         </Typography>
@@ -475,7 +522,13 @@ export default function CashierPage() {
                   <IconButton size="small" onClick={() => updateCartQty(line.key, -1)} disabled={line.quantity <= 1}>
                     <Remove fontSize="small" />
                   </IconButton>
-                  <Typography fontWeight={600} sx={{ minWidth: 28, textAlign: 'center' }}>{line.quantity}</Typography>
+                  <TextField
+                    size="small" type="number"
+                    sx={{ width: 60, '& input': { textAlign: 'center', py: 0.5, px: 0.5 } }}
+                    value={line.quantity}
+                    onChange={e => setCartQty(line.key, parseInt(e.target.value, 10))}
+                    inputProps={{ min: 1 }}
+                  />
                   <IconButton size="small" onClick={() => updateCartQty(line.key, 1)}>
                     <Add fontSize="small" />
                   </IconButton>
